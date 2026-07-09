@@ -69,6 +69,26 @@ describe("buildApp", () => {
     expect(await res.json()).toEqual({ error: { code: "not_found", message: "widget not found" } });
   });
 
+  it("registers the data service: the catalog lists the five built-in datasets", async () => {
+    const built = buildApp(testEnv);
+    ctx = built.ctx;
+    await built.kernel.start(built.app);
+    try {
+      const res = await built.app.request("/api/data/datasets");
+      expect(res.status).toBe(200);
+      const list = (await res.json()) as Array<{ id: string }>;
+      expect(list.map((d) => d.id).sort()).toEqual([
+        "billing-usage",
+        "copilot-metrics",
+        "copilot-seats",
+        "org-people",
+        "premium-requests",
+      ]);
+    } finally {
+      await built.kernel.stop();
+    }
+  });
+
   it("returns a 404 envelope for unknown routes", async () => {
     const built = buildApp(testEnv);
     ctx = built.ctx;

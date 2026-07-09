@@ -84,6 +84,21 @@ describe("createGitHubClient", () => {
     expect(calls[0]?.url).toContain("per_page=100");
   });
 
+  it("download fetches a signed URL without auth headers and counts the request", async () => {
+    const { impl, calls } = fakeFetch([new Response('{"day":"2026-07-01"}\n')]);
+    const gh = makeClient(impl);
+    const text = await gh.download("https://signed.example.com/report-1.ndjson");
+    expect(text).toContain("2026-07-01");
+    expect(calls[0]?.url).toBe("https://signed.example.com/report-1.ndjson");
+    expect(calls[0]?.headers.get("authorization")).toBeNull();
+    expect(gh.requestCount()).toBe(1);
+  });
+
+  it("download throws with the status on a non-ok response", async () => {
+    const { impl } = fakeFetch([new Response("expired", { status: 403 })]);
+    expect(makeClient(impl).download("https://signed.example.com/x")).rejects.toThrow("403");
+  });
+
   it("logs and retries once when rate limited", async () => {
     const reset = String(Math.floor(Date.now() / 1000) + 1);
     const log = recordingLogger();

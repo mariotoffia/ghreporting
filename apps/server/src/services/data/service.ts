@@ -1,9 +1,28 @@
 import { AppError, NotFoundError, ValidationError } from "../../kernel/errors";
 import type { MicroService, ServiceContext } from "../../kernel/ports";
+import { billingUsageConnector } from "./connectors/billing-usage";
+import { copilotMetricsConnector } from "./connectors/copilot-metrics";
+import { copilotSeatsConnector } from "./connectors/copilot-seats";
+import { orgPeopleConnector } from "./connectors/org-people";
+import { premiumRequestsConnector } from "./connectors/premium-requests";
+import { addDays } from "./connectors/util";
 import type { DatasetConnector, DatasetQuery, GitHubClient, ResultSet } from "./ports";
+import { startScheduler } from "./scheduler";
 import { readSyncState, syncGaps } from "./sync";
 
 const MAX_LIMIT = 1000;
+// the scheduler keeps a trailing window warm; 28 days covers every dataset TTL
+const REFRESH_WINDOW_DAYS = 27;
+
+function builtinConnectors(now: () => Date): DatasetConnector[] {
+  return [
+    orgPeopleConnector(now),
+    copilotSeatsConnector(now),
+    copilotMetricsConnector(now),
+    premiumRequestsConnector(now),
+    billingUsageConnector(now),
+  ];
+}
 
 export interface DataService extends MicroService {
   registerConnector(c: DatasetConnector): void;
@@ -21,6 +40,8 @@ export function createDataService(opts: {
 }): DataService {
   const connectors = new Map<string, DatasetConnector>();
   let ctx: ServiceContext;
+  let scheduler: { stop(): void } | undefined;
+  let unsubscribeUnlock: (() => void) | undefined;
 
   function registerConnector(c: DatasetConnector): void {
     if (connectors.has(c.meta.id)) throw new AppError("connector.duplicate", c.meta.id, 409);
@@ -67,7 +88,30 @@ export function createDataService(opts: {
     queryDataset,
     init(c) {
       ctx = c;
-      for (const con of opts.connectors ?? []) registerConnector(con);
+      // tests pass their own connectors; production registers the built-ins
+      const list = opts.connectors ?? builtinConnectors(() => ctx.config.now());
+      for (const con of list) registerConnector(con);
+      if (ctx.config.scheduler && ctx.config.org) {
+        const org = ctx.config.org;
+        let unlocked = false;
+        unsubscribeUnlock = ctx.bus.on("auth.unlocked", () => {
+          unlocked = true;
+        });
+        scheduler = startScheduler({
+          ctx,
+          connectors: () => [...connectors.values()],
+          sync: async (id) => {
+            const today = ctx.config.now().toISOString().slice(0, 10);
+            const range = { from: addDays(today, -REFRESH_WINDOW_DAYS), to: today };
+            await syncGaps(connector(id), { org, range }, ctx, opts.gh);
+          },
+          unlocked: () => unlocked,
+        });
+      }
+    },
+    shutdown() {
+      scheduler?.stop();
+      unsubscribeUnlock?.();
     },
     routes(app) {
       app.get("/datasets", (c) =>

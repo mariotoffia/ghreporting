@@ -17,6 +17,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     origins: origins && origins.length > 0 ? origins : DEFAULT_ORIGINS,
     secretBackend: env.GHR_SECRET_BACKEND,
     packaged: env.GHR_PACKAGED === "1",
+    // background refresh: on in the packaged app, opt-in (GHR_SCHEDULER=1) in dev
+    scheduler: env.GHR_PACKAGED === "1" || env.GHR_SCHEDULER === "1",
     now: () => new Date(),
   });
 }

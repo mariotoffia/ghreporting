@@ -56,6 +56,17 @@ export function createGitHubClient(opts: {
         yield page.data as never;
       }
     },
+    async download(url) {
+      count++;
+      const f = opts.fetchImpl ?? fetch;
+      const res = await f(url); // deliberately no Authorization: signed URLs reject it
+      if (!res.ok) {
+        throw Object.assign(new Error(`download failed: ${res.status} ${url}`), {
+          status: res.status,
+        });
+      }
+      return res.text();
+    },
     requestCount: () => count,
   };
 }

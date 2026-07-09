@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { buildApp } from "../../app";
+import { Hono } from "hono";
+import { openDatabase } from "../../adapters/db/database";
+import { runMigrations } from "../../adapters/db/migrate";
+import { migrations } from "../../adapters/db/migrations";
+import { wireErrorEnvelope } from "../../app";
+import { createEventBus } from "../../kernel/bus";
+import { loadConfig } from "../../kernel/config";
+import { createContext } from "../../kernel/context";
 import type { NotificationInput } from "../../kernel/ports";
+import { createKernel } from "../../kernel/registry";
+import { nullLogger } from "../../kernel/testutil";
 import type { DatasetConnector, DatasetQuery, GitHubClient } from "./ports";
 import { createDataService } from "./service";
 
@@ -39,11 +48,29 @@ function fakeConnector(id = "fake-ds", calls: string[] = []): DatasetConnector {
   };
 }
 
-let harness: ReturnType<typeof buildApp>;
+// Minimal composition (like buildApp, minus the built-in data service) so the
+// fake connector owns /api/data in these tests.
+function buildHarness() {
+  const log = nullLogger();
+  const db = openDatabase(":memory:");
+  runMigrations(db, migrations);
+  const { ctx, ...bind } = createContext({
+    db,
+    bus: createEventBus(log),
+    config: loadConfig({ GHR_DB_PATH: ":memory:" }),
+    log,
+  });
+  const kernel = createKernel(ctx);
+  const app = new Hono();
+  wireErrorEnvelope(app, log);
+  return { app, kernel, ctx, bind };
+}
+
+let harness: ReturnType<typeof buildHarness>;
 let notes: NotificationInput[];
 
 async function start(...connectors: DatasetConnector[]) {
-  harness = buildApp({ GHR_DB_PATH: ":memory:" });
+  harness = buildHarness();
   notes = [];
   harness.bind.bindNotify((n) => notes.push(n));
   const data = createDataService({ gh, connectors });

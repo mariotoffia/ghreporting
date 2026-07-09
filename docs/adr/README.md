@@ -18,6 +18,7 @@ implementation state is tracked in IMPLEMENTATION_PLAN.md, not here.
 | [0009](0009-echarts-charts.md) | Apache ECharts for charts; binding store mediates sheet⇄chart | accepted |
 | [0010](0010-single-binary-packaging.md) | Single-binary packaging with `bun build --compile` | accepted |
 | [0011](0011-biome-lint-format.md) | Biome for lint + format; `tsc --noEmit` as vet | accepted |
+| [0012](0012-copilot-metrics-reports-api.md) | Copilot metrics via the usage-metrics reports API (legacy API sunset) | accepted |
 
 ## Numbering
 

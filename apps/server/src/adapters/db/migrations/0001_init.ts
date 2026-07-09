@@ -1,29 +1,40 @@
 import type { Migration } from "../migrate";
 
 /**
- * GitHub's published premium-request model multipliers (docs.github.com →
- * "Requests in GitHub Copilot" → model multipliers), priced at $0.04/request.
+ * GitHub's published premium-request model multipliers, verified 2026-07 against
+ * docs.github.com → "Model multipliers for annual plans" (request-based billing,
+ * legacy since the 2026-06 move to AI credits), priced at $0.04/request.
+ * Model keys are the display names the billing usage API returns in `model`.
  * Multipliers are temporal (DDD.md §3.2 ModelPrice): new pricing ⇒ new
  * valid_from rows in a later migration, never an UPDATE.
  */
 const MODEL_MULTIPLIERS: ReadonlyArray<[model: string, multiplier: number]> = [
-  ["gpt-4.1", 0],
-  ["gpt-4o", 0],
-  ["gpt-5-mini", 0],
-  ["claude-haiku-3.5", 0.33],
-  ["claude-sonnet-3.5", 1],
-  ["claude-sonnet-3.7", 1],
-  ["claude-sonnet-3.7-thinking", 1.25],
-  ["claude-sonnet-4", 1],
-  ["claude-opus-4", 10],
-  ["gemini-2.0-flash", 0.25],
-  ["gemini-2.5-pro", 1],
-  ["o3", 1],
-  ["o3-mini", 0.33],
-  ["o4-mini", 0.33],
-  ["gpt-4.5", 50],
-  ["gpt-5", 1],
-  ["grok-code-fast-1", 0.25],
+  ["Claude Haiku 4.5", 0.33],
+  ["Claude Sonnet 4.5", 6],
+  ["Claude Sonnet 4.6", 9],
+  ["Claude Opus 4.5", 15],
+  ["Claude Opus 4.6", 27],
+  ["Claude Opus 4.7", 27],
+  ["Claude Opus 4.8", 27],
+  ["Gemini 2.5 Pro", 1],
+  ["Gemini 3 Flash", 0.33],
+  ["Gemini 3 Pro", 6],
+  ["Gemini 3.1 Pro", 6],
+  ["Gemini 3.5 Flash", 14],
+  ["GPT-4o", 0.33],
+  ["GPT-4o mini", 0.33],
+  ["GPT-5 mini", 0.33],
+  ["GPT-5.1", 3],
+  ["GPT-5.1-Codex", 3],
+  ["GPT-5.1-Codex-Max", 3],
+  ["GPT-5.1-Codex-Mini", 0.33],
+  ["GPT-5.3-Codex", 6],
+  ["GPT-5.4", 6],
+  ["GPT-5.4 mini", 6],
+  ["GPT-5.5", 57],
+  ["Raptor mini", 0.33],
+  ["MAI-Code-1-Flash", 0.33],
+  ["Copilot code review", 13],
 ];
 
 const PRICE_PER_REQUEST_USD = 0.04;

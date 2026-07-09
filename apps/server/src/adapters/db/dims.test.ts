@@ -122,8 +122,9 @@ describe("dims helpers", () => {
   it("seeded model_prices exist from GitHub's published multiplier table", () => {
     const n = (db.query("SELECT COUNT(*) n FROM model_prices").get() as { n: number }).n;
     expect(n).toBeGreaterThan(5);
-    const base = modelPriceOn(db, "gpt-4.1", "2026-07-01");
+    const base = modelPriceOn(db, "Gemini 2.5 Pro", "2026-07-01");
     expect(base?.priceUsd).toBe(0.04);
+    expect(base?.multiplier).toBe(1);
   });
 
   it("all of it works on a file-backed database too", () => {

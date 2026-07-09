@@ -15,6 +15,7 @@ export interface AppConfig {
   origins: string[]; // WebAuthn + CORS allow-list (dev :5173, packaged :8787)
   secretBackend?: string; // "keychain" | "encrypted-file" override
   packaged: boolean; // true inside the compiled binary
+  scheduler: boolean; // background refresh (T2.6): packaged || GHR_SCHEDULER=1
   now(): Date; // the ONLY clock services may read (TESTS.md §2.2)
 }
 

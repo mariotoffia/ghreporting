@@ -46,6 +46,11 @@ export interface GitHubClient {
     opts?: { etag?: string },
   ): Promise<{ status: 200; data: T; etag?: string } | { status: 304 }>;
   paginate<T>(route: string, params?: Record<string, unknown>): AsyncIterable<T[]>;
+  /**
+   * Fetch a signed download URL (Copilot usage-metrics reports, ADR 0012)
+   * WITHOUT auth headers — signed-URL hosts reject Authorization.
+   */
+  download(url: string): Promise<string>;
   requestCount(): number;
 }
 
