@@ -1,20 +1,13 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { Hono } from "hono";
+import { openDatabase } from "./adapters/db/database";
+import { runMigrations } from "./adapters/db/migrate";
+import { migrations } from "./adapters/db/migrations";
 import { createEventBus } from "./kernel/bus";
 import { loadConfig } from "./kernel/config";
 import { createContext } from "./kernel/context";
 import { AppError } from "./kernel/errors";
 import { createLogger } from "./kernel/logger";
 import { createKernel } from "./kernel/registry";
-
-// ponytail: minimal DB seam. T2.1 replaces this with adapters/db `openDatabase`
-// + `runMigrations(db, migrations)`. No service touches the DB yet in E1.
-function openDb(path: string): Database {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  return new Database(path, { create: true });
-}
 
 /**
  * The composition root: build config, logger, bus, DB, and the kernel, wire the
@@ -26,7 +19,8 @@ export function buildApp(env: Record<string, string | undefined> = process.env) 
   const config = loadConfig(env);
   const log = createLogger("app");
   const bus = createEventBus(log);
-  const db = openDb(config.dbPath);
+  const db = openDatabase(config.dbPath);
+  runMigrations(db, migrations);
   const { ctx, ...bind } = createContext({ db, bus, config, log });
   const kernel = createKernel(ctx);
   const app = new Hono();

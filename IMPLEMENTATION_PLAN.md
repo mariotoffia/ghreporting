@@ -63,10 +63,10 @@ Status: ✅ done · ⬜ open · (opt) optional.
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T2.1 | SQLite adapter and migration runner | [details](IMPLEMENTATION_PLAN_DETAILS.md#t21-sqlite-adapter-and-migration-runner) | T1.4 | ⬜ |
-| T2.2 | Schema v1 migration | [details](IMPLEMENTATION_PLAN_DETAILS.md#t22-schema-v1) | T2.1 | ⬜ |
-| T2.3 | GitHub client adapter | [details](IMPLEMENTATION_PLAN_DETAILS.md#t23-github-client-adapter) | T1.4, T3.4 | ⬜ |
-| T2.4 | Sync engine and data service | [details](IMPLEMENTATION_PLAN_DETAILS.md#t24-sync-engine-and-data-service) | T2.2, T2.3 | ⬜ |
+| T2.1 | SQLite adapter and migration runner | [details](IMPLEMENTATION_PLAN_DETAILS.md#t21-sqlite-adapter-and-migration-runner) | T1.4 | ✅ |
+| T2.2 | Schema v1 migration | [details](IMPLEMENTATION_PLAN_DETAILS.md#t22-schema-v1) | T2.1 | ✅ |
+| T2.3 | GitHub client adapter | [details](IMPLEMENTATION_PLAN_DETAILS.md#t23-github-client-adapter) | T1.4, T3.4 | ✅ |
+| T2.4 | Sync engine and data service | [details](IMPLEMENTATION_PLAN_DETAILS.md#t24-sync-engine-and-data-service) | T2.2, T2.3 | ✅ |
 | T2.5a | Connector: org-people | [details](IMPLEMENTATION_PLAN_DETAILS.md#t25a-connector-org-people) | T2.4 | ⬜ |
 | T2.5b | Connector: copilot-seats | [details](IMPLEMENTATION_PLAN_DETAILS.md#t25b-connector-copilot-seats) | T2.4 | ⬜ |
 | T2.5c | Connector: copilot-metrics | [details](IMPLEMENTATION_PLAN_DETAILS.md#t25c-connector-copilot-metrics) | T2.4 | ⬜ |

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@ghreporting/domain": "workspace:*",
-    "hono": "^4.8.0"
+    "hono": "^4.8.0",
+    "octokit": "^5.0.5"
   }
 }
