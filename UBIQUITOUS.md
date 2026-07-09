@@ -74,6 +74,10 @@ bounded context ([DDD.md](DDD.md)).
 | **Notification** | A card telling the human something needs attention. |
 | **Key** | Business identity; the same key upserts instead of duplicating. |
 | **Level** | `info` / `warning` / `error`. |
+| **Notify** | Raise or refresh a card by key (re-fires a dismissed card). |
+| **Read** | Human marks a card seen (stamps `read_at`); it stays active. |
+| **Dismiss** | Human clears a card (stamps `dismissed_at`); drops from the active list. |
+| **Resolve** | System auto-**Dismiss** of a card by key when its condition clears (e.g. a fixed credential). |
 | **Stream** | The SSE endpoint pushing changes to the UI live. |
 
 ## Kernel & cross-cutting

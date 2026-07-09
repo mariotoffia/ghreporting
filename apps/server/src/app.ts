@@ -20,6 +20,7 @@ import type { WebAuthnLib } from "./services/auth/webauthn";
 import { githubPatProvider } from "./services/credentials/providers/github-pat";
 import { createCredentialsService } from "./services/credentials/service";
 import { createDataService } from "./services/data/service";
+import { createNotificationsService } from "./services/notifications/service";
 
 /**
  * The composition root: build config, logger, bus, DB, and the kernel, wire the
@@ -97,7 +98,12 @@ export function buildApp(
     return next();
   });
 
-  // credentials before auth (unlock needs the bound secret store) before data.
+  // notifications first: its init binds ctx.notify/ctx.resolve, so every later
+  // service (credentials fires cards on a bad token) sees a live notifier.
+  // Then credentials before auth (unlock needs the bound secret store) before data.
+  kernel.register(
+    createNotificationsService({ bindNotify: bind.bindNotify, bindResolve: bind.bindResolve }),
+  );
   kernel.register(credentials);
   kernel.register(auth);
   kernel.register(createDataService({ gh }));

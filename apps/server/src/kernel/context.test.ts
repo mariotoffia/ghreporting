@@ -7,7 +7,7 @@ import { SecretsLockedError } from "./errors";
 import type { NotificationInput, ServiceContext } from "./ports";
 import { nullLogger, recordingLogger } from "./testutil";
 
-function base(log = nullLogger()): Omit<ServiceContext, "notify" | "secrets"> {
+function base(log = nullLogger()): Omit<ServiceContext, "notify" | "resolve" | "secrets"> {
   return {
     db: new Database(":memory:"),
     bus: createEventBus(log),
@@ -61,5 +61,18 @@ describe("createContext", () => {
     bindNotify((x) => got.push(x));
     ctx.notify(n);
     expect(got).toEqual([n]);
+  });
+
+  it("warns on resolve before bindResolve, then delegates after", () => {
+    const log = recordingLogger();
+    const b = base(log);
+    db = b.db;
+    const { ctx, bindResolve } = createContext(b);
+    ctx.resolve("credential.x.invalid");
+    expect(log.lines.some((l) => l.level === "warn")).toBe(true);
+    const got: string[] = [];
+    bindResolve((k) => got.push(k));
+    ctx.resolve("credential.x.invalid");
+    expect(got).toEqual(["credential.x.invalid"]);
   });
 });

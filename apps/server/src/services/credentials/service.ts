@@ -84,11 +84,6 @@ export function createCredentialsService(opts: {
       )
       .run(id, type, backend.id, status.state, detail, expiresAt, checkedAt);
 
-    // Recovery note: a non-invalid state does NOT clear a prior
-    // `credential.<id>.invalid` card, which the refresh scheduler gates on
-    // (scheduler.ts). `ctx.notify` is create-only and a no-op until E5, so this
-    // is latent today; T5.1 must add a resolve-by-key primitive the credentials
-    // service calls here on recovery. See IMPLEMENTATION_PLAN_DETAILS.md T5.1.
     if (status.state === "invalid") {
       ctx.bus.emit({ type: "credential.invalid", id });
       ctx.notify({
@@ -98,7 +93,14 @@ export function createCredentialsService(opts: {
         body: status.reason,
         source: "credentials",
       });
-    } else if (status.state === "expiring") {
+      return;
+    }
+    // Recovery: any non-invalid state clears a prior `credential.<id>.invalid`
+    // card. The refresh scheduler pauses while such a card is active
+    // (scheduler.ts), so without this the scheduler stays paused after a token is
+    // fixed. `ctx.resolve` is the notifications uService primitive (E5, T5.1).
+    ctx.resolve(`credential.${id}.invalid`);
+    if (status.state === "expiring") {
       ctx.bus.emit({ type: "credential.expiring", id, daysLeft: status.daysLeft });
       ctx.notify({
         key: `credential.${id}.expiring`,
@@ -107,17 +109,17 @@ export function createCredentialsService(opts: {
         body: `${status.daysLeft} day(s) left`,
         source: "credentials",
       });
-    } else {
-      const missing = missingScopes(type, status.scopes);
-      if (missing.length > 0) {
-        ctx.notify({
-          key: `credential.${id}.scopes`,
-          level: "warning",
-          title: `Credential ${id} is missing scopes`,
-          body: `missing: ${missing.join(", ")}`,
-          source: "credentials",
-        });
-      }
+      return;
+    }
+    const missing = missingScopes(type, status.scopes);
+    if (missing.length > 0) {
+      ctx.notify({
+        key: `credential.${id}.scopes`,
+        level: "warning",
+        title: `Credential ${id} is missing scopes`,
+        body: `missing: ${missing.join(", ")}`,
+        source: "credentials",
+      });
     }
   }
 

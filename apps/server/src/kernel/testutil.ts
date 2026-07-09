@@ -34,6 +34,7 @@ export function stubContext(log: Logger = nullLogger()): ServiceContext {
     config: loadConfig({ HOME: "/tmp" }),
     log,
     notify: () => {},
+    resolve: () => {},
     secrets: {
       get: async () => null,
       set: async () => {},

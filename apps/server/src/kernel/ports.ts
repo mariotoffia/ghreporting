@@ -74,6 +74,7 @@ export interface ServiceContext {
   config: AppConfig;
   log: Logger;
   notify(n: NotificationInput): void;
+  resolve(key: string): void; // dismiss a card by key on recovery (notifications uService)
   secrets: SecretStore;
 }
 

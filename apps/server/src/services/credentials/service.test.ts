@@ -67,6 +67,7 @@ function fakeProvider(
 interface Harness {
   ctx: ReturnType<typeof createContext>["ctx"];
   notes: NotificationInput[];
+  resolved: string[];
   events: AppEvent[];
   app: Hono;
   cred: ReturnType<typeof createCredentialsService>;
@@ -87,13 +88,20 @@ async function setup(opts: {
   open.push(db);
   runMigrations(db, migrations);
   const notes: NotificationInput[] = [];
+  const resolved: string[] = [];
   const events: AppEvent[] = [];
   const bus = createEventBus(nullLogger());
   bus.on("credential.expiring", (e) => events.push(e));
   bus.on("credential.invalid", (e) => events.push(e));
   const config = { ...loadConfig({}), now: () => NOW, secretBackend: opts.secretBackend };
-  const { ctx, bindNotify, bindSecrets } = createContext({ db, bus, config, log: nullLogger() });
+  const { ctx, bindNotify, bindResolve, bindSecrets } = createContext({
+    db,
+    bus,
+    config,
+    log: nullLogger(),
+  });
   bindNotify((n) => notes.push(n));
+  bindResolve((key) => resolved.push(key));
 
   let tickFn: (() => void) | undefined;
   const timers = {
@@ -117,7 +125,7 @@ async function setup(opts: {
   cred.routes?.(sub, ctx);
   app.route("/", sub);
   wireErrorEnvelope(app, nullLogger());
-  return { ctx, notes, events, app, cred, tick: () => tickFn?.() };
+  return { ctx, notes, resolved, events, app, cred, tick: () => tickFn?.() };
 }
 
 const ID = "github-pat:default";
@@ -256,6 +264,35 @@ describe("credentials service — save + validate routes", () => {
     expect(res.status).toBe(200);
     expect(backend.store.has(ACCOUNT)).toBe(false);
     expect(h.ctx.db.query("SELECT 1 FROM credentials_meta WHERE id=?").get(ID)).toBeNull();
+  });
+});
+
+describe("credentials service — recovery clears the invalid card (T5.1 wiring)", () => {
+  it("resolves credential.<id>.invalid on a valid (ok) validation", async () => {
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "ok", scopes: ["read:org"] }),
+    });
+    await h.app.request(`/${ID}`, { method: "PUT", body: JSON.stringify({ secret: "ghp_ok" }) });
+    expect(h.resolved).toContain(`credential.${ID}.invalid`);
+  });
+
+  it("resolves credential.<id>.invalid on an expiring (still-usable) validation", async () => {
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "expiring", expiresAt: NOW.toISOString(), daysLeft: 3 }),
+    });
+    await h.app.request(`/${ID}`, { method: "PUT", body: JSON.stringify({ secret: "ghp_soon" }) });
+    expect(h.resolved).toContain(`credential.${ID}.invalid`);
+  });
+
+  it("does not resolve on an invalid validation", async () => {
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "invalid", reason: "token rejected (401)" }),
+    });
+    await h.app.request(`/${ID}`, { method: "PUT", body: JSON.stringify({ secret: "ghp_bad" }) });
+    expect(h.resolved).not.toContain(`credential.${ID}.invalid`);
   });
 });
 

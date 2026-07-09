@@ -23,6 +23,7 @@ export function connectorContext(): ServiceContext & { notes: NotificationInput[
     config: { ...loadConfig({}), now: () => TEST_NOW },
     log: nullLogger(),
     notify: (n) => notes.push(n),
+    resolve: () => {},
     secrets: { get: async () => null, set: async () => {}, delete: async () => {} },
     notes,
   };

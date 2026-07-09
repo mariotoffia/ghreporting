@@ -94,8 +94,8 @@ Status: ✅ done · ⬜ open · (opt) optional.
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T5.1 | Notifications service | [details](IMPLEMENTATION_PLAN_DETAILS.md#t51-notifications-service) | T2.2 | ⬜ |
-| T5.2 | notify wiring and SSE stream | [details](IMPLEMENTATION_PLAN_DETAILS.md#t52-notify-wiring-and-sse-stream) | T5.1, T1.5 | ⬜ |
+| T5.1 | Notifications service | [details](IMPLEMENTATION_PLAN_DETAILS.md#t51-notifications-service) | T2.2 | ✅ |
+| T5.2 | notify wiring and SSE stream | [details](IMPLEMENTATION_PLAN_DETAILS.md#t52-notify-wiring-and-sse-stream) | T5.1, T1.5 | ✅ |
 
 ### E6 — Web shell
 

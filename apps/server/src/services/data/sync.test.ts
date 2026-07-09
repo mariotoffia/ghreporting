@@ -32,6 +32,7 @@ beforeEach(() => {
     config: { ...loadConfig({}), now: () => NOW },
     log: nullLogger(),
     notify: (n) => notes.push(n),
+    resolve: () => {},
     secrets: { get: async () => null, set: async () => {}, delete: async () => {} },
   };
 });
