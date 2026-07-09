@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { buildApp } from "./app";
-import { NotFoundError, ValidationError } from "./kernel/errors";
+import { AppError, NotFoundError, ValidationError } from "./kernel/errors";
 import type { ServiceContext } from "./kernel/ports";
 
 const testEnv = { ...process.env, GHR_DB_PATH: ":memory:" };
@@ -26,6 +26,17 @@ describe("buildApp", () => {
     const res = await built.app.request("/api/boom");
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: { code: "validation", message: "bad org" } });
+  });
+
+  it("clamps an out-of-range AppError status to 500 instead of throwing in onError", async () => {
+    const built = buildApp(testEnv);
+    ctx = built.ctx;
+    built.app.get("/api/weird", () => {
+      throw new AppError("weird", "off the scale", 0);
+    });
+    const res = await built.app.request("/api/weird");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: { code: "weird", message: "off the scale" } });
   });
 
   it("maps an unexpected throw to a 500 internal envelope", async () => {

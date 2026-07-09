@@ -53,6 +53,19 @@ describe("createEventBus", () => {
     expect(log.lines.some((l) => l.level === "error")).toBe(true);
   });
 
+  it("a listener that unsubscribes another during dispatch does not skip the in-flight event", () => {
+    const bus = createEventBus(recordingLogger());
+    const got: string[] = [];
+    let offB = () => {};
+    bus.on("auth.unlocked", () => {
+      got.push("a");
+      offB(); // remove B mid-dispatch — B was subscribed when emit started, so it still fires
+    });
+    offB = bus.on("auth.unlocked", () => got.push("b"));
+    bus.emit({ type: "auth.unlocked" });
+    expect(got).toEqual(["a", "b"]);
+  });
+
   it("emitting a type with no listeners is a no-op", () => {
     const bus = createEventBus(recordingLogger());
     expect(() => bus.emit({ type: "notification.changed", id: 1 })).not.toThrow();

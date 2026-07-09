@@ -36,7 +36,9 @@ export function buildApp(env: Record<string, string | undefined> = process.env) 
   app.onError((err, c) => {
     const e = err instanceof AppError ? err : new AppError("internal", String(err), 500);
     if (e.status >= 500) log.error("unhandled", { path: c.req.path, err: String(err) });
-    return c.json({ error: { code: e.code, message: e.message } }, e.status as 400);
+    // A bad status would make c.json throw a RangeError out of onError — clamp to 500.
+    const status = e.status >= 200 && e.status <= 599 ? e.status : 500;
+    return c.json({ error: { code: e.code, message: e.message } }, status as 400);
   });
   app.notFound((c) => c.json({ error: { code: "not_found", message: "no such route" } }, 404));
 

@@ -53,4 +53,21 @@ describe("createLogger", () => {
     expect(errSpy).toHaveBeenCalled();
     expect(logSpy).not.toHaveBeenCalled();
   });
+
+  it("reserved keys win over caller fields (a `level` field cannot relabel the record)", () => {
+    createLogger("svc").warn("careful", { level: "info", scope: "attacker", extra: 1 });
+    const line = lastLine();
+    expect(line.level).toBe("warn");
+    expect(line.scope).toBe("svc");
+    expect(line.msg).toBe("careful");
+    expect(line.extra).toBe(1); // non-reserved fields still pass through
+  });
+
+  it("never throws on an unserializable field (BigInt / circular)", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => createLogger("app").error("boom", { big: 10n })).not.toThrow();
+    expect(() => createLogger("app").error("boom", circular)).not.toThrow();
+    expect(lastLine().fields).toBe("[unserializable]");
+  });
 });

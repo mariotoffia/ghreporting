@@ -56,4 +56,21 @@ describe("loadConfig", () => {
   it("GHR_PACKAGED other than '1' is not packaged", () => {
     expect(loadConfig({ HOME: "/h", GHR_PACKAGED: "true" }).packaged).toBe(false);
   });
+
+  it("falls back to the default port for empty or non-numeric PORT", () => {
+    expect(loadConfig({ HOME: "/h", PORT: "" }).port).toBe(8787);
+    expect(loadConfig({ HOME: "/h", PORT: "abc" }).port).toBe(8787);
+  });
+
+  it("falls back to default origins when GHR_ORIGINS is empty or all blanks", () => {
+    const def = ["http://localhost:5173", "http://localhost:8787"];
+    expect(loadConfig({ HOME: "/h", GHR_ORIGINS: "" }).origins).toEqual(def);
+    expect(loadConfig({ HOME: "/h", GHR_ORIGINS: " , " }).origins).toEqual(def);
+  });
+
+  it("drops blank entries but keeps real origins", () => {
+    expect(
+      loadConfig({ HOME: "/h", GHR_ORIGINS: "http://a.test, ,http://b.test" }).origins,
+    ).toEqual(["http://a.test", "http://b.test"]);
+  });
 });

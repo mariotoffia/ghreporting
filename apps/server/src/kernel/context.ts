@@ -5,7 +5,8 @@ import type { NotificationInput, SecretStore, ServiceContext } from "./ports";
 
 export function createContext(base: Omit<ServiceContext, "notify" | "secrets">) {
   const slots = {
-    notify: (n: NotificationInput) => base.log.warn("notify before notifications init", { ...n }),
+    notify: (n: NotificationInput) =>
+      base.log.warn("notify before notifications init", { notification: n }),
     secrets: lockedSecretStore(),
   };
   const ctx: ServiceContext = {

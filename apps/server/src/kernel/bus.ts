@@ -4,7 +4,9 @@ export function createEventBus(log: Logger): EventBus {
   const listeners = new Map<AppEvent["type"], Set<(e: AppEvent) => void>>();
   return {
     emit(e) {
-      for (const fn of listeners.get(e.type) ?? []) {
+      // Snapshot the set: a listener may subscribe/unsubscribe during dispatch, and we
+      // must neither skip nor double-deliver the in-flight event (matches EventEmitter).
+      for (const fn of [...(listeners.get(e.type) ?? [])]) {
         try {
           fn(e);
         } catch (err) {
