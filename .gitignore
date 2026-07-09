@@ -111,3 +111,10 @@ dist
 
 # TernJS port file
 .tern-port
+
+# ghreporting additions
+*.db
+*.db-journal
+*.out
+.DS_Store
+.ghreporting/
