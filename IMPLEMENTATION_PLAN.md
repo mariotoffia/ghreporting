@@ -53,11 +53,11 @@ Status: ✅ done · ⬜ open · (opt) optional.
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T1.1 | Kernel ports and errors | [details](IMPLEMENTATION_PLAN_DETAILS.md#t11-kernel-ports-and-errors) | T0.2 | ⬜ |
-| T1.2 | Event bus | [details](IMPLEMENTATION_PLAN_DETAILS.md#t12-event-bus) | T1.1 | ⬜ |
-| T1.3 | Config and logger | [details](IMPLEMENTATION_PLAN_DETAILS.md#t13-config-and-logger) | T1.1 | ⬜ |
-| T1.4 | Registry and app composition | [details](IMPLEMENTATION_PLAN_DETAILS.md#t14-registry-and-app-composition) | T1.2, T1.3 | ⬜ |
-| T1.5 | SSE hub | [details](IMPLEMENTATION_PLAN_DETAILS.md#t15-sse-hub) | T1.4 | ⬜ |
+| T1.1 | Kernel ports and errors | [details](IMPLEMENTATION_PLAN_DETAILS.md#t11-kernel-ports-and-errors) | T0.2 | ✅ |
+| T1.2 | Event bus | [details](IMPLEMENTATION_PLAN_DETAILS.md#t12-event-bus) | T1.1 | ✅ |
+| T1.3 | Config and logger | [details](IMPLEMENTATION_PLAN_DETAILS.md#t13-config-and-logger) | T1.1 | ✅ |
+| T1.4 | Registry and app composition | [details](IMPLEMENTATION_PLAN_DETAILS.md#t14-registry-and-app-composition) | T1.2, T1.3 | ✅ |
+| T1.5 | SSE hub | [details](IMPLEMENTATION_PLAN_DETAILS.md#t15-sse-hub) | T1.4 | ✅ |
 
 ### E2 — Storage and sync (`data` uService)
 

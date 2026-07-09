@@ -1,11 +1,44 @@
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { Hono } from "hono";
+import { createEventBus } from "./kernel/bus";
+import { loadConfig } from "./kernel/config";
+import { createContext } from "./kernel/context";
+import { AppError } from "./kernel/errors";
+import { createLogger } from "./kernel/logger";
+import { createKernel } from "./kernel/registry";
+
+// ponytail: minimal DB seam. T2.1 replaces this with adapters/db `openDatabase`
+// + `runMigrations(db, migrations)`. No service touches the DB yet in E1.
+function openDb(path: string): Database {
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  return new Database(path, { create: true });
+}
 
 /**
- * Builds the HTTP application. The uService kernel (task T1.1) will take over
- * route mounting; until then this is the composition root for routes.
+ * The composition root: build config, logger, bus, DB, and the kernel, wire the
+ * shared error envelope, and return the pieces `index.ts` (or a test) drives.
+ * Services are registered here as tasks land (notifications → credentials → auth →
+ * data → workspace); E1 registers none — only `/api/health` is mounted directly.
  */
-export function createApp(): Hono {
+export function buildApp(env: Record<string, string | undefined> = process.env) {
+  const config = loadConfig(env);
+  const log = createLogger("app");
+  const bus = createEventBus(log);
+  const db = openDb(config.dbPath);
+  const { ctx, ...bind } = createContext({ db, bus, config, log });
+  const kernel = createKernel(ctx);
   const app = new Hono();
+
   app.get("/api/health", (c) => c.json({ status: "ok", service: "ghreporting" }));
-  return app;
+
+  app.onError((err, c) => {
+    const e = err instanceof AppError ? err : new AppError("internal", String(err), 500);
+    if (e.status >= 500) log.error("unhandled", { path: c.req.path, err: String(err) });
+    return c.json({ error: { code: e.code, message: e.message } }, e.status as 400);
+  });
+  app.notFound((c) => c.json({ error: { code: "not_found", message: "no such route" } }, 404));
+
+  return { app, kernel, ctx, bind };
 }
