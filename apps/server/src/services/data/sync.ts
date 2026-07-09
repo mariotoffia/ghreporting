@@ -28,7 +28,14 @@ export function markSyncing(db: Database, dataset: string, gap: Gap): void {
   ).run(dataset, gap.scope);
 }
 
-/** Widen the watermark to include the gap and stamp last_synced_at. */
+/**
+ * Widen the watermark to include the gap and stamp last_synced_at.
+ * Known tradeoff: a sync of only older days also refreshes last_synced_at,
+ * postponing the trailing-TTL reopen by one cycle. Gating the stamp on
+ * gap.to ≥ synced_to would instead make snapshot datasets (whose gap is the
+ * query range) look perpetually stale — the delayed reopen self-heals, so it
+ * stays. See rangeCoverage in connectors/util.ts.
+ */
 export function markSynced(db: Database, dataset: string, gap: Gap, now: Date): void {
   db.query(
     `INSERT INTO sync_state(dataset, scope, synced_from, synced_to, last_synced_at, status)

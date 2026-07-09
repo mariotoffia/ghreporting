@@ -84,6 +84,12 @@ export function rangeCoverage(
   if (q.range.to > coveredTo) {
     gaps.push({ scope: q.org, from: addDays(coveredTo, 1), to: q.range.to });
   }
+  // a reopen wider than the watermark makes the two gaps touch — merge them
+  // so the overlap isn't fetched twice
+  const [a, b] = gaps;
+  if (a && b && b.from <= addDays(a.to, 1)) {
+    return [{ scope: q.org, from: a.from, to: b.to }];
+  }
   return gaps;
 }
 

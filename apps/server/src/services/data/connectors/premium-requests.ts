@@ -125,7 +125,9 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
     model: string,
     item: UsageItem,
   ): Record<string, unknown> {
-    const requests = item.grossQuantity ?? item.netQuantity ?? 0;
+    // netQuantity is post-discount; without a gross figure, total requests
+    // made = net + the discounted (allowance-covered) portion
+    const requests = item.grossQuantity ?? (item.netQuantity ?? 0) + (item.discountQuantity ?? 0);
     const price = modelPriceOn(ctxLike.db, model, day);
     if (!price) ctxLike.notifyUnknown(model);
     const multiplier = price?.multiplier ?? 1;

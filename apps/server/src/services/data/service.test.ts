@@ -192,6 +192,28 @@ describe("data service", () => {
         .status,
     ).toBe(400); // non-date strings must not reach connectors
     expect(
+      (
+        await post({
+          dataset: "fake-ds",
+          q: { ...q, range: { from: "2026-01-01", to: "2026-13-01" } },
+        })
+      ).status,
+    ).toBe(400); // calendar-invalid dates would poison the watermark
+    expect(
+      (
+        await post({
+          dataset: "fake-ds",
+          q: { ...q, range: { from: "2026-06-31", to: "2026-07-01" } },
+        })
+      ).status,
+    ).toBe(400); // day overflow must not silently roll over
+
+    calls.length = 0;
+    expect((await post({ dataset: "fake-ds", q: { ...q, limit: null }, sync: false })).status).toBe(
+      200,
+    );
+    expect(calls).toEqual(["select:limit=1000"]); // null limit means default, not 1
+    expect(
       (await post({ dataset: "fake-ds", q: { ...q, filter: { day: [{ bad: 1 }] } } })).status,
     ).toBe(400); // filter values must be strings
   });

@@ -74,15 +74,15 @@ export function createDataService(opts: {
       throw new ValidationError("q.org must be a non-empty string");
     }
     const { from, to } = q.range ?? {};
-    const isoDay = /^\d{4}-\d{2}-\d{2}$/;
-    if (
-      typeof from !== "string" ||
-      typeof to !== "string" ||
-      !isoDay.test(from) ||
-      !isoDay.test(to) ||
-      from > to
-    ) {
-      throw new ValidationError("q.range must be ISO dates (YYYY-MM-DD) with from ≤ to");
+    // shape AND calendar validity: "2026-13-01" would poison the watermark
+    // (lexical MAX) and later crash coverage() on every query of the dataset
+    const isoDay = (d: unknown): d is string => {
+      if (typeof d !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+      const t = new Date(`${d}T00:00:00Z`); // Invalid Date has no toISOString
+      return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d;
+    };
+    if (!isoDay(from) || !isoDay(to) || from > to) {
+      throw new ValidationError("q.range must be calendar dates (YYYY-MM-DD) with from ≤ to");
     }
     for (const [key, value] of Object.entries(q.filter ?? {})) {
       const values = Array.isArray(value) ? value : [value];
@@ -91,8 +91,8 @@ export function createDataService(opts: {
       }
     }
     const limit =
-      q.limit === undefined
-        ? MAX_LIMIT // never unbounded through the route
+      q.limit == null // null and undefined both mean "default", never unbounded
+        ? MAX_LIMIT
         : Math.min(Math.max(1, Math.floor(Number(q.limit) || 1)), MAX_LIMIT);
     return { org: q.org, range: { from, to }, filter: q.filter, limit };
   }

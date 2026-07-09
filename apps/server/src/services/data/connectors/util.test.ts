@@ -120,6 +120,21 @@ describe("rangeCoverage", () => {
     ]);
   });
 
+  it("a reopen wider than the watermark merges into one gap (no overlap)", () => {
+    const past = new Date(TEST_NOW.getTime() - 80 * 3_600_000);
+    markSynced(db, "ds", { scope: "acme", from: "2026-07-03", to: "2026-07-04" }, past);
+    // TTL 72h → reopen 3 days: coveredTo = 07-01, before synced_from
+    expect(
+      rangeCoverage(
+        db,
+        "ds",
+        { org: "acme", range: { from: "2026-07-01", to: "2026-07-10" } },
+        72,
+        TEST_NOW,
+      ),
+    ).toEqual([{ scope: "acme", from: "2026-07-01", to: "2026-07-10" }]);
+  });
+
   it("6h TTL still re-opens at least one day", () => {
     const past = new Date(TEST_NOW.getTime() - 7 * 3_600_000);
     markSynced(db, "ds", { scope: "acme", from: "2026-07-01", to: "2026-07-08" }, past);

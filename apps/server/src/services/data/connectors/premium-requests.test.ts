@@ -120,7 +120,7 @@ describe("premium-requests connector", () => {
       // org × model, day grain (60+40 summed), GPT-5.4 multiplier 6 from seed
       ["2026-07-01", null, "GPT-5.4", 100, 6, 24, 24],
       // user × model on the month's last day
-      ["2026-07-31", "anna", "Mystery-1", 10, 1, 0.5, 0],
+      ["2026-07-31", "anna", "Mystery-1", 20, 1, 1, 0.5],
       ["2026-07-31", "mario", "GPT-5.4", 100, 6, 24, 20],
     ]);
   });
@@ -171,11 +171,11 @@ describe("premium-requests connector", () => {
 
   it("computes amounts from domain math when the payload omits them", async () => {
     await syncOnce();
-    // anna's Mystery-1: no amounts in payload; 10 requests (netQuantity), the
-    // payload's 0.05 price, multiplier 1, all quota-covered (discountQuantity
-    // 10) → gross 10×1×0.05=0.5, net 0
+    // anna's Mystery-1: no amounts in payload; netQuantity 10 is
+    // post-discount, so 20 total requests (10 net + 10 covered) at the
+    // payload's 0.05 price, multiplier 1 → gross 20×0.05=1, net (20−10)×0.05=0.5
     const rs = connector().select(ctx.db, { ...q, filter: { user_login: "anna" } });
-    expect(rs.rows).toEqual([["2026-07-31", "anna", "Mystery-1", 10, 1, 0.5, 0]]);
+    expect(rs.rows).toEqual([["2026-07-31", "anna", "Mystery-1", 20, 1, 1, 0.5]]);
   });
 
   it("double upsert is idempotent", async () => {

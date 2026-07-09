@@ -40,6 +40,12 @@ export interface ResultSet {
 
 /** One polite GitHub door: token, throttling, ETags, pagination, request budget. */
 export interface GitHubClient {
+  /**
+   * 304 is only ever returned when opts.etag was sent. No connector passes
+   * one yet (ADR 0005 status note) — whoever wires etags must make fetch()
+   * treat 304 as "still covered", not as an empty result, or syncGaps will
+   * watermark an unfetched gap.
+   */
   get<T>(
     route: string,
     params?: Record<string, unknown>,
