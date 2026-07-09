@@ -13,6 +13,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     // `Number(env.PORT) || 8787`: unset/empty/non-numeric all fall back to the default.
     port: Number(env.PORT) || 8787,
     dbPath: expand(env.GHR_DB_PATH ?? "~/.ghreporting/ghreporting.db"),
+    secretsPath: expand(env.GHR_SECRETS_PATH ?? "~/.ghreporting/secrets.enc.json"),
+    masterKeyPath: expand(env.GHR_MASTER_KEY_PATH ?? "~/.ghreporting/master.key"),
     org: env.GHR_ORG,
     origins: origins && origins.length > 0 ? origins : DEFAULT_ORIGINS,
     secretBackend: env.GHR_SECRET_BACKEND,

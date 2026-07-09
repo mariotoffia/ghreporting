@@ -11,6 +11,8 @@ export interface Logger {
 export interface AppConfig {
   port: number;
   dbPath: string;
+  secretsPath: string; // ~/.ghreporting/secrets.enc.json (encrypted-file backend)
+  masterKeyPath: string; // ~/.ghreporting/master.key (non-darwin master-key fallback)
   org?: string;
   origins: string[]; // WebAuthn + CORS allow-list (dev :5173, packaged :8787)
   secretBackend?: string; // "keychain" | "encrypted-file" override
@@ -49,6 +51,21 @@ export interface SecretStore {
   get(account: string): Promise<string | null>;
   set(account: string, secret: string): Promise<void>;
   delete(account: string): Promise<void>;
+}
+
+/**
+ * A place secret bytes rest (keychain, encrypted file, …). The credentials
+ * service picks one via `available()` and binds it as the `SecretStore`. No
+ * `list()` on purpose — which accounts exist lives in `credentials_meta`, so a
+ * backend never enumerates a user's whole keychain (PLUGIN.md §Secret Store).
+ */
+export interface SecretStoreBackend {
+  readonly id: string; // "keychain" | "encrypted-file" | …
+  /** Can this backend work here? (platform, binary present, dir writable) */
+  available(): Promise<boolean>;
+  get(account: string): Promise<string | null>; // null = not found (not an error)
+  set(account: string, secret: string): Promise<void>; // overwrite allowed
+  delete(account: string): Promise<void>; // idempotent
 }
 
 export interface ServiceContext {

@@ -1149,6 +1149,14 @@ service, so every later service's `ctx.notify` is live.
 **Tests** same key twice → one row, fresh `updated_at`, original `created_at`;
 dismissed + re-notify → active again; read/dismiss stamps; list filters; emit on
 every change.
+**Also** add a `resolve(key: string): void` primitive (stamp `dismissed_at`,
+`bus.emit("notification.changed")`) and bind it like `notify`. The credentials
+service (T3.4 `applyStatus`) calls `resolve("credential.<id>.invalid")` on
+recovery to ok/expiring, otherwise the refresh scheduler
+([scheduler.ts](../apps/server/src/services/data/scheduler.ts)) — which gates on
+an active `credential.github-pat%.invalid` card — stays paused after a token is
+fixed. Latent until this task binds a real `notify`. Test: notify invalid →
+resolve → scheduler's `credentialInvalid()` query returns nothing.
 **Done when** green.
 **Refs** DDD.md §3.6, UBIQUITOUS.md §Notifications, T1.4 context binding.
 

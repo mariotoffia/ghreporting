@@ -78,17 +78,17 @@ Status: ✅ done · ⬜ open · (opt) optional.
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T3.1 | Secret store ports, encrypted-file backend, conformance suite | [details](IMPLEMENTATION_PLAN_DETAILS.md#t31-secret-store-ports-and-encrypted-file-backend) | T1.4 | ⬜ |
-| T3.2 | macOS Keychain backend | [details](IMPLEMENTATION_PLAN_DETAILS.md#t32-macos-keychain-backend) | T3.1 | ⬜ |
-| T3.3 | Credential providers and github-pat | [details](IMPLEMENTATION_PLAN_DETAILS.md#t33-credential-providers-and-github-pat) | T3.1, T5.1 | ⬜ |
-| T3.4 | Credentials service and routes | [details](IMPLEMENTATION_PLAN_DETAILS.md#t34-credentials-service-and-routes) | T3.2, T3.3 | ⬜ |
+| T3.1 | Secret store ports, encrypted-file backend, conformance suite | [details](IMPLEMENTATION_PLAN_DETAILS.md#t31-secret-store-ports-and-encrypted-file-backend) | T1.4 | ✅ |
+| T3.2 | macOS Keychain backend | [details](IMPLEMENTATION_PLAN_DETAILS.md#t32-macos-keychain-backend) | T3.1 | ✅ |
+| T3.3 | Credential providers and github-pat | [details](IMPLEMENTATION_PLAN_DETAILS.md#t33-credential-providers-and-github-pat) | T3.1, T5.1 | ✅ |
+| T3.4 | Credentials service and routes | [details](IMPLEMENTATION_PLAN_DETAILS.md#t34-credentials-service-and-routes) | T3.2, T3.3 | ✅ |
 
 ### E4 — Access (`auth` uService)
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T4.1 | WebAuthn register and login ceremonies | [details](IMPLEMENTATION_PLAN_DETAILS.md#t41-webauthn-register-and-login) | T2.2, T1.4 | ⬜ |
-| T4.2 | Session gate and master key unlock | [details](IMPLEMENTATION_PLAN_DETAILS.md#t42-session-gate-and-master-key-unlock) | T4.1, T3.4 | ⬜ |
+| T4.1 | WebAuthn register and login ceremonies | [details](IMPLEMENTATION_PLAN_DETAILS.md#t41-webauthn-register-and-login) | T2.2, T1.4 | ✅ |
+| T4.2 | Session gate and master key unlock | [details](IMPLEMENTATION_PLAN_DETAILS.md#t42-session-gate-and-master-key-unlock) | T4.1, T3.4 | ✅ |
 
 ### E5 — Notifications uService
 

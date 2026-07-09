@@ -20,6 +20,9 @@ secrets. "Like some sites do" *is* WebAuthn with a platform authenticator.
   cookie) and **unlocks secrets**: the 32-byte master key is loaded from the OS
   keychain into process memory (`auth.unlocked` event). Sessions die with the process
   — restarting the app means one more Touch ID tap, which is the right trade.
+- Off darwin (no keychain), the master key rests in a `0600` file
+  `~/.ghreporting/master.key` — the honest portable fallback (same trade-off as the
+  encrypted-file secret backend, ADR 0006). Logout/shutdown zeroes the in-memory key.
 - Hono middleware rejects all `/api/*` except `/api/health` and `/api/auth/*` until a
   session exists; the `SecretStore` port throws `SecretsLockedError` until unlocked.
 

@@ -96,9 +96,9 @@ server-side.
 
 | Element | Kind | Notes |
 |---------|------|-------|
-| `Passkey` | aggregate root | one resident WebAuthn platform credential; counter must increase per assertion (clone detection) |
+| `Passkey` | aggregate root | one resident WebAuthn platform credential; a signature counter must never regress (clone detection). Platform authenticators that always report `0` are allowed (`0 → 0` is not a regression); any decrease from a non-zero counter is rejected. |
 | `Session` | entity (in-memory) | random token, `HttpOnly` cookie; absent after restart by design |
-| `MasterKey` | value object (in-memory) | 32 bytes; at rest only inside the OS keychain |
+| `MasterKey` | value object (in-memory) | 32 bytes; at rest in the OS keychain (darwin), else a `0600` file (portable fallback, ADR 0007); in memory only while unlocked |
 
 Invariant: `secrets` port stays **locked** (every call throws `SecretsLockedError`)
 until a verified assertion emits `auth.unlocked`.

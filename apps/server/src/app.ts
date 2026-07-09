@@ -1,24 +1,39 @@
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import { openDatabase } from "./adapters/db/database";
 import { runMigrations } from "./adapters/db/migrate";
 import { migrations } from "./adapters/db/migrations";
 import { createGitHubClient } from "./adapters/github/client";
+import { createEncryptedFileBackend } from "./adapters/secretstore/encfile";
+import { createKeychainBackend } from "./adapters/secretstore/keychain";
 import { createEventBus } from "./kernel/bus";
 import { loadConfig } from "./kernel/config";
 import { createContext } from "./kernel/context";
 import { AppError } from "./kernel/errors";
 import { createLogger } from "./kernel/logger";
-import type { Logger } from "./kernel/ports";
+import type { Logger, SecretStoreBackend } from "./kernel/ports";
 import { createKernel } from "./kernel/registry";
+import { createMasterKeyFileBackend } from "./services/auth/masterkey";
+import { createAuthService, SESSION_COOKIE } from "./services/auth/service";
+import { createSessionStore } from "./services/auth/session";
+import type { WebAuthnLib } from "./services/auth/webauthn";
+import { githubPatProvider } from "./services/credentials/providers/github-pat";
+import { createCredentialsService } from "./services/credentials/service";
 import { createDataService } from "./services/data/service";
 
 /**
  * The composition root: build config, logger, bus, DB, and the kernel, wire the
  * shared error envelope, and return the pieces `index.ts` (or a test) drives.
  * Services are registered here as tasks land (notifications → credentials → auth →
- * data → workspace); E2 registers `data`.
+ * data → workspace); E2 registers `data`, E4 registers `auth` and the session gate.
+ *
+ * `deps` is the test seam: unit tests inject an in-memory master-key backend
+ * (never the real keychain, TESTS.md §4) and a scripted WebAuthn lib.
  */
-export function buildApp(env: Record<string, string | undefined> = process.env) {
+export function buildApp(
+  env: Record<string, string | undefined> = process.env,
+  deps: { masterKeyBackend?: SecretStoreBackend; webauthnLib?: WebAuthnLib } = {},
+) {
   const config = loadConfig(env);
   const log = createLogger("app");
   const bus = createEventBus(log);
@@ -28,25 +43,69 @@ export function buildApp(env: Record<string, string | undefined> = process.env) 
   const kernel = createKernel(ctx);
   const app = new Hono();
 
-  // The one GitHub door. The token comes from the secrets port per request
-  // (rotation-safe); until the credentials service (T3.4) binds a real store,
-  // every sync fails into the stale-serve path with a notification.
+  // The master key for the encrypted-file backend lives in memory only while
+  // unlocked; E4 (T4.2) sets `master.key` on `auth.unlocked`. Until then the
+  // encrypted-file backend is locked (darwin uses the keychain instead).
+  const master: { key: Uint8Array | null } = { key: null };
+  const credentials = createCredentialsService({
+    bindSecrets: bind.bindSecrets,
+    backends: [
+      createKeychainBackend(),
+      createEncryptedFileBackend({
+        path: config.secretsPath,
+        // Hand out a per-call snapshot. Today encfile consumes the key synchronously
+        // (WebCrypto importKey copies the bytes before any await), so logout's in-place
+        // key.fill(0) is already safe — but the key buffer is shared-mutable, so a
+        // snapshot keeps that true if a reader ever holds the key across an await.
+        keyProvider: () => (master.key ? new Uint8Array(master.key) : null),
+      }),
+    ],
+    providers: [githubPatProvider()],
+  });
+
+  // The one GitHub door. The token comes from the credentials service per request
+  // (rotation-safe); before a valid token is stored, every sync fails into the
+  // stale-serve path with a notification.
   const gh = createGitHubClient({
-    tokenProvider: async () => {
-      const token = await ctx.secrets.get("github-pat:default");
-      if (!token) {
-        throw new AppError("credential.missing", "no GitHub token stored", 401);
-      }
-      return token;
-    },
+    tokenProvider: credentials.tokenProvider("github-pat:default"),
     log: log.child("github"),
   });
+  // Access (E4): sessions live here so the gate middleware and the auth service
+  // share one store. The master key rests in the keychain on darwin, else a
+  // 0600 file — first available wins, mirroring the secret-backend selection.
+  const sessions = createSessionStore(() => config.now());
+  const auth = createAuthService({
+    sessions,
+    masterKeyBackends: deps.masterKeyBackend
+      ? [deps.masterKeyBackend]
+      : [createKeychainBackend(), createMasterKeyFileBackend(config.masterKeyPath)],
+    setMasterKey: (key) => {
+      master.key = key;
+    },
+    lib: deps.webauthnLib,
+  });
+
+  // The gate (ARCHITECTURE.md §6): every /api/* call needs a Session except
+  // health and the auth ceremonies themselves.
+  app.use("/api/*", async (c, next) => {
+    const path = c.req.path;
+    if (path === "/api/health" || path.startsWith("/api/auth/")) return next();
+    const token = getCookie(c, SESSION_COOKIE);
+    if (!token || !sessions.touch(token)) {
+      return c.json({ error: { code: "unauthorized", message: "login required" } }, 401);
+    }
+    return next();
+  });
+
+  // credentials before auth (unlock needs the bound secret store) before data.
+  kernel.register(credentials);
+  kernel.register(auth);
   kernel.register(createDataService({ gh }));
 
   app.get("/api/health", (c) => c.json({ status: "ok", service: "ghreporting" }));
   wireErrorEnvelope(app, log);
 
-  return { app, kernel, ctx, bind };
+  return { app, kernel, ctx, bind, sessions };
 }
 
 /** The shared JSON error envelope every route answers failures with. */
