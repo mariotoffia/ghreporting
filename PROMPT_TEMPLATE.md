@@ -1,0 +1,2 @@
+implement E{x} in IMPLEMENTATION_PLAN.md - do a deep analysis of the plan, design, architecture, ddd, UBIQUITOUS, test and {START LOOP} implement, test, and docuemnt it. Do a adversial QA review to gate if it passes. Loop until zero bugs/issues left to be fixed -> {START LOOP} else {END LOOP}. make sure that lint, test work properly.
+For each task finished - set the status to ✅ 
