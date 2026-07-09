@@ -103,6 +103,24 @@ describe("dims helpers", () => {
     expect(row.parent_team_id).toBe(100);
   });
 
+  it("renames update in place: same id with a new login/slug never throws", () => {
+    // GitHub ids are stable; logins and slugs are not. Conflicting on the
+    // mutable key would abort on the id PK and crash-loop every later sync.
+    upsertOrg(db, { id: 1, login: "acme" });
+    expect(upsertOrg(db, { id: 1, login: "acme-renamed" })).toBe(1);
+    expect((db.query("SELECT login FROM orgs WHERE id=1").get() as { login: string }).login).toBe(
+      "acme-renamed",
+    );
+    upsertUser(db, { id: 7, login: "mario" });
+    expect(upsertUser(db, { id: 7, login: "mario-renamed" })).toBe(7);
+    const orgId = 1;
+    upsertTeam(db, { id: 100, orgId, slug: "eng" });
+    expect(upsertTeam(db, { id: 100, orgId, slug: "engineering" })).toBe(100);
+    expect((db.query("SELECT slug FROM teams WHERE id=100").get() as { slug: string }).slug).toBe(
+      "engineering",
+    );
+  });
+
   it("ensureSku is idempotent per (product, sku)", () => {
     const id = ensureSku(db, "actions", "actions_linux");
     expect(ensureSku(db, "actions", "actions_linux")).toBe(id);

@@ -23,7 +23,6 @@ interface BreakdownEntry {
 
 interface OrgDayRecord {
   day?: string;
-  organization_id?: string;
   daily_active_users?: number;
   code_generation_activity_count?: number;
   code_acceptance_activity_count?: number;
@@ -53,13 +52,15 @@ const COLUMNS = [
 ] as const;
 
 /** Flatten one org-1-day record into fact rows (org totals + per-model chat activity). */
-function factRows(record: OrgDayRecord, day: string, orgLogin: string): Record<string, unknown>[] {
+function factRows(
+  record: OrgDayRecord,
+  day: string,
+  org: { id: number; login: string },
+): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
-  const base = {
-    org_id: Number(record.organization_id),
-    org_login: orgLogin,
-    day: record.day ?? day,
-  };
+  // org id comes from /orgs/{org}, not record.organization_id: a record that
+  // omits the field would otherwise mint an org row with a bogus rowid
+  const base = { org_id: org.id, org_login: org.login, day: record.day ?? day };
   for (const [field, metric] of RECORD_METRICS) {
     const quantity = record[field];
     if (typeof quantity === "number") rows.push({ ...base, model: null, metric, quantity });
@@ -112,6 +113,8 @@ export function copilotMetricsConnector(now: () => Date): DatasetConnector {
     },
 
     async *fetch(gap, gh) {
+      const org = await gh.get<{ id: number; login: string }>("/orgs/{org}", { org: gap.scope });
+      if (org.status !== 200) return;
       for (const day of eachDay(gap.from, gap.to)) {
         let res: Awaited<ReturnType<typeof gh.get<{ download_links?: string[] }>>>;
         try {
@@ -128,7 +131,7 @@ export function copilotMetricsConnector(now: () => Date): DatasetConnector {
           const text = await gh.download(link);
           for (const line of text.split("\n")) {
             if (!line.trim()) continue;
-            rows.push(...factRows(JSON.parse(line) as OrgDayRecord, day, gap.scope));
+            rows.push(...factRows(JSON.parse(line) as OrgDayRecord, day, org.data));
           }
         }
         if (rows.length > 0) yield rows;

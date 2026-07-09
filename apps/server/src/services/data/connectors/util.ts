@@ -73,17 +73,16 @@ export function rangeCoverage(
   const coveredTo = isFresh(w.last_synced_at, ttlHours, now)
     ? w.synced_to
     : addDays(w.synced_to, -reopenDays);
+  // Gaps must ADJOIN the watermark, never be clamped to the query range:
+  // markSynced widens one [synced_from, synced_to] interval with MIN/MAX, so a
+  // gap that skipped the days between query and watermark would mark that hole
+  // as covered without ever fetching it.
   const gaps: Gap[] = [];
   if (q.range.from < w.synced_from) {
-    gaps.push({
-      scope: q.org,
-      from: q.range.from,
-      to: addDays(w.synced_from, -1) < q.range.to ? addDays(w.synced_from, -1) : q.range.to,
-    });
+    gaps.push({ scope: q.org, from: q.range.from, to: addDays(w.synced_from, -1) });
   }
   if (q.range.to > coveredTo) {
-    const from = addDays(coveredTo, 1) > q.range.from ? addDays(coveredTo, 1) : q.range.from;
-    gaps.push({ scope: q.org, from, to: q.range.to });
+    gaps.push({ scope: q.org, from: addDays(coveredTo, 1), to: q.range.to });
   }
   return gaps;
 }
@@ -100,8 +99,10 @@ export function filterSql(
   let sql = "";
   const params: string[] = [];
   for (const [key, value] of Object.entries(filter ?? {})) {
-    const expr = map[key];
-    if (!expr) continue;
+    // hasOwn, not truthiness: `{"__proto__": [...]}` must not resolve to
+    // Object.prototype and end up stringified into the SQL
+    if (!Object.hasOwn(map, key)) continue;
+    const expr = map[key] as string;
     const values = Array.isArray(value) ? value : [value];
     if (values.length === 0) continue;
     sql += ` AND ${expr} IN (${values.map(() => "?").join(", ")})`;

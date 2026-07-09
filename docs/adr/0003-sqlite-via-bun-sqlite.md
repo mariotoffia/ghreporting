@@ -13,8 +13,10 @@ relational aggregation queries, needs to ship inside a single binary.
 - **SQLite through `bun:sqlite`** — synchronous, in-runtime, zero dependencies, WAL
   mode. One database file: `~/.ghreporting/ghreporting.db` (`GHR_DB_PATH` override;
   tests use `:memory:`).
-- **Migrations are numbered `.sql` files** (`adapters/db/migrations/0001_init.sql`, …)
-  applied by a ~40-line runner tracking `schema_migrations`. No ORM: the reporting
+- **Migrations are numbered modules** applied by a ~40-line runner tracking
+  `schema_migrations`. Amended by T2.1: they are TS modules carrying SQL template
+  strings (`adapters/db/migrations/0001_init.ts`, …), not loose `.sql` files, so
+  `bun build --compile` (ADR 0010) embeds them for free. No ORM: the reporting
   queries *are* SQL (views, GROUP BY over facts); an ORM would hide the part we care
   about most.
 - Aggregations ship as SQL views, versioned in migrations like tables.

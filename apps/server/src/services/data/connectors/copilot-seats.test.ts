@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Gap } from "../ports";
+import { markSynced } from "../sync";
 import { copilotSeatsConnector } from "./copilot-seats";
 import { connectorContext, fakeGitHub, TEST_NOW } from "./testutil";
 
@@ -96,5 +97,7 @@ describe("copilot-seats connector", () => {
   it("coverage: whole-scope gap when never synced, empty when fresh", async () => {
     const c = connector();
     expect(c.coverage(ctx.db, q)).toHaveLength(1);
+    markSynced(ctx.db, "copilot-seats", gap, TEST_NOW);
+    expect(c.coverage(ctx.db, q)).toEqual([]);
   });
 });

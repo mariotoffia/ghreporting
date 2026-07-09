@@ -11,7 +11,13 @@
 
 import type { Database } from "bun:sqlite";
 import { premiumRequestCost, roundUsd } from "@ghreporting/domain";
-import { ensureSku, insertFactSql, modelPriceOn, upsertOrg } from "../../../adapters/db/dims";
+import {
+  ensureSku,
+  insertFactSql,
+  modelPriceOn,
+  upsertOrg,
+  upsertUser,
+} from "../../../adapters/db/dims";
 import type { DatasetConnector, Gap } from "../ports";
 import { eachDay, filterSql, rangeCoverage } from "./util";
 
@@ -65,15 +71,19 @@ export function monthsOf(
   return months;
 }
 
-function orgMembers(db: Database, orgLogin: string): string[] {
+interface Member {
+  id: number;
+  login: string;
+}
+
+function orgMembers(db: Database, orgLogin: string): Member[] {
   return db
     .query(
-      `SELECT u.login FROM org_members m
+      `SELECT u.id, u.login FROM org_members m
        JOIN orgs o ON o.id = m.org_id JOIN users u ON u.id = m.user_id
        WHERE o.login = ?1 ORDER BY u.login`,
     )
-    .values(orgLogin)
-    .map((r) => r[0] as string);
+    .all(orgLogin) as Member[];
 }
 
 /** Group usage items by model, summing quantities and amounts. */
@@ -86,8 +96,16 @@ function byModel(items: UsageItem[]): Map<string, UsageItem> {
       const v = item[k];
       if (typeof v === "number") (acc[k] as number | undefined) = ((acc[k] as number) ?? 0) + v;
     };
-    for (const k of ["grossQuantity", "grossAmount", "discountQuantity", "netAmount"] as const)
+    for (const k of [
+      "grossQuantity",
+      "netQuantity",
+      "grossAmount",
+      "discountQuantity",
+      "netAmount",
+    ] as const) {
       add(k);
+    }
+    acc.pricePerUnit ??= item.pricePerUnit; // a price is per model, not summable
     grouped.set(model, acc);
   }
   return grouped;
@@ -103,7 +121,7 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
     },
     day: string,
     metric: string,
-    userLogin: string | null,
+    user: Member | null,
     model: string,
     item: UsageItem,
   ): Record<string, unknown> {
@@ -127,7 +145,8 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
       org_login: ctxLike.orgLogin,
       day,
       metric,
-      user_login: userLogin,
+      user_id: user?.id ?? null,
+      user_login: user?.login ?? null,
       model,
       requests,
       multiplier,
@@ -192,14 +211,30 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
         if (rows.length > 0) yield rows;
       }
 
-      // user × model, month grain — one call per (member, month); members come
-      // from the local org-people snapshot (sync org-people first for user rows)
-      const members = orgMembers(ctx.db, gap.scope);
+      // user × model, month grain — one call per (member, month).
+      // ponytail: request ceiling ≈ members × months per cold gap (a 12-month
+      // backfill of a 500-member org ≈ 6 000 requests, above the 5 000/h
+      // limit); if that ever bites, batch backfills month-by-month or switch
+      // to the enterprise-level endpoint that allows user filtering in bulk.
+      let members = orgMembers(ctx.db, gap.scope);
+      if (members.length === 0) {
+        // org-people has not synced yet — enumerate members from the API so
+        // the user grain never silently vanishes behind sync ordering
+        for await (const page of gh.paginate<Member>("/orgs/{org}/members", { org: gap.scope })) {
+          members.push(...page.map((m) => ({ id: m.id, login: m.login })));
+        }
+        members = members.sort((a, b) => a.login.localeCompare(b.login));
+      }
       for (const { year, month, lastDay } of monthsOf(gap.from, gap.to)) {
         for (const user of members) {
           let res: { status: number; data?: UsageResponse };
           try {
-            res = await gh.get<UsageResponse>(USAGE_ROUTE, { org: gap.scope, year, month, user });
+            res = await gh.get<UsageResponse>(USAGE_ROUTE, {
+              org: gap.scope,
+              year,
+              month,
+              user: user.login,
+            });
           } catch (e) {
             if ((e as { status?: number }).status === 404) continue;
             throw e;
@@ -220,10 +255,9 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
       const orgId = upsertOrg(db, { id: first.org_id as number, login: first.org_login as string });
       const skuId = ensureSku(db, "copilot", "copilot_premium_request");
       const insert = db.query(insertFactSql);
-      const userId = db.query("SELECT id FROM users WHERE login=?1");
       for (const r of rows) {
-        const user = r.user_login
-          ? ((userId.get(r.user_login as string) as { id: number } | null)?.id ?? null)
+        const user = r.user_id
+          ? upsertUser(db, { id: r.user_id as number, login: r.user_login as string })
           : null;
         insert.run(
           r.day as string,

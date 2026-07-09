@@ -64,7 +64,7 @@ describe("createGitHubClient", () => {
 
   it("rethrows non-304 errors", async () => {
     const { impl } = fakeFetch([json({ message: "Not Found" }, {}, 404)]);
-    expect(makeClient(impl).get("/orgs/{org}", { org: "nope" })).rejects.toThrow();
+    await expect(makeClient(impl).get("/orgs/{org}", { org: "nope" })).rejects.toThrow();
   });
 
   it("paginate follows link headers across two pages", async () => {
@@ -96,11 +96,13 @@ describe("createGitHubClient", () => {
 
   it("download throws with the status on a non-ok response", async () => {
     const { impl } = fakeFetch([new Response("expired", { status: 403 })]);
-    expect(makeClient(impl).download("https://signed.example.com/x")).rejects.toThrow("403");
+    await expect(makeClient(impl).download("https://signed.example.com/x")).rejects.toThrow("403");
   });
 
   it("logs and retries once when rate limited", async () => {
-    const reset = String(Math.floor(Date.now() / 1000) + 1);
+    // reset in the PAST: the retry path is identical but octokit's throttle
+    // sleeps until the reset time — a future value is a hidden real sleep
+    const reset = String(Math.floor(Date.now() / 1000) - 10);
     const log = recordingLogger();
     const { impl, calls } = fakeFetch([
       json(

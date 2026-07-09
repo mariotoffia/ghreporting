@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { upsertOrg, upsertUser } from "../../../adapters/db/dims";
 import type { Gap } from "../ports";
+import { markSynced } from "../sync";
 import { monthsOf, premiumRequestsConnector } from "./premium-requests";
 import { connectorContext, fakeGitHub, ghError, TEST_NOW } from "./testutil";
 
@@ -43,8 +44,9 @@ const fixtures = {
         {
           model: "Mystery-1", // not in model_prices → multiplier 1 + notification
           unitType: "requests",
-          grossQuantity: 10,
+          netQuantity: 10, // no grossQuantity: netQuantity must carry through grouping
           discountQuantity: 10,
+          pricePerUnit: 0.05, // payload price wins over the $0.04 default
         },
       ],
     },
@@ -118,12 +120,12 @@ describe("premium-requests connector", () => {
       // org × model, day grain (60+40 summed), GPT-5.4 multiplier 6 from seed
       ["2026-07-01", null, "GPT-5.4", 100, 6, 24, 24],
       // user × model on the month's last day
-      ["2026-07-31", "anna", "Mystery-1", 10, 1, 0.4, 0],
+      ["2026-07-31", "anna", "Mystery-1", 10, 1, 0.5, 0],
       ["2026-07-31", "mario", "GPT-5.4", 100, 6, 24, 20],
     ]);
   });
 
-  it("unknown model stores multiplier 1 and raises one deduped notification", async () => {
+  it("unknown model stores multiplier 1 and notifies with a model-keyed dedupe key", async () => {
     await syncOnce();
     const unknown = ctx.notes.filter(
       (n) => n.key === "data.premium-requests.unknown-model.Mystery-1",
@@ -132,12 +134,48 @@ describe("premium-requests connector", () => {
     expect(unknown[0]?.level).toBe("warning");
   });
 
+  it("enumerates members from the API when org-people has not synced yet", async () => {
+    const fresh = connectorContext(); // no org_members seeded
+    try {
+      const withMembers = structuredClone(fixtures) as typeof fixtures & {
+        pages: Record<string, unknown[][]>;
+      };
+      withMembers.pages = {
+        "/orgs/acme/members": [
+          [
+            { id: 7, login: "mario" },
+            { id: 8, login: "anna" },
+          ],
+        ],
+      };
+      const c = connector();
+      for await (const b of c.fetch(gap, fakeGitHub(withMembers), fresh)) c.upsert(fresh.db, b);
+      const rs = c.select(fresh.db, q);
+      expect(rs.rows.filter((r) => r[1] !== null).map((r) => r[1])).toEqual(["anna", "mario"]);
+    } finally {
+      fresh.db.close();
+    }
+  });
+
+  it("coverage: whole range when never synced, empty when fresh", () => {
+    const c = connector();
+    expect(c.coverage(ctx.db, q)).toEqual([{ scope: "acme", from: q.range.from, to: q.range.to }]);
+    markSynced(
+      ctx.db,
+      "premium-requests",
+      { scope: "acme", from: q.range.from, to: q.range.to },
+      TEST_NOW,
+    );
+    expect(c.coverage(ctx.db, q)).toEqual([]);
+  });
+
   it("computes amounts from domain math when the payload omits them", async () => {
     await syncOnce();
-    // anna's Mystery-1: no amounts in payload; 10 requests, multiplier 1, all
-    // quota-covered (discountQuantity 10) → gross 10×1×0.04=0.4, net 0
+    // anna's Mystery-1: no amounts in payload; 10 requests (netQuantity), the
+    // payload's 0.05 price, multiplier 1, all quota-covered (discountQuantity
+    // 10) → gross 10×1×0.05=0.5, net 0
     const rs = connector().select(ctx.db, { ...q, filter: { user_login: "anna" } });
-    expect(rs.rows).toEqual([["2026-07-31", "anna", "Mystery-1", 10, 1, 0.4, 0]]);
+    expect(rs.rows).toEqual([["2026-07-31", "anna", "Mystery-1", 10, 1, 0.5, 0]]);
   });
 
   it("double upsert is idempotent", async () => {

@@ -5,6 +5,11 @@ import type { Database } from "bun:sqlite";
  * (orgs, users, teams, skus), so dimension rows stay consistent (PLUGIN.md rule 3).
  */
 
+// All three upserts conflict on the STABLE GitHub numeric id, not the mutable
+// login/slug: a rename must update in place, not abort on the id PK and
+// crash-loop every later sync. (A reused login under a new id still fails
+// loudly on the UNIQUE(login) constraint — rare enough to stay an error.)
+
 export function upsertOrg(
   db: Database,
   o: { id: number; login: string; name?: string | null },
@@ -12,7 +17,7 @@ export function upsertOrg(
   return (
     db
       .query(
-        "INSERT INTO orgs(id, login, name) VALUES (?1, ?2, ?3) ON CONFLICT(login) DO UPDATE SET name=COALESCE(?3, name) RETURNING id",
+        "INSERT INTO orgs(id, login, name) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET login=?2, name=COALESCE(?3, name) RETURNING id",
       )
       .get(o.id, o.login, o.name ?? null) as { id: number }
   ).id;
@@ -25,7 +30,7 @@ export function upsertUser(
   return (
     db
       .query(
-        "INSERT INTO users(id, login, name) VALUES (?1, ?2, ?3) ON CONFLICT(login) DO UPDATE SET name=COALESCE(?3, name) RETURNING id",
+        "INSERT INTO users(id, login, name) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET login=?2, name=COALESCE(?3, name) RETURNING id",
       )
       .get(u.id, u.login, u.name ?? null) as { id: number }
   ).id;
@@ -44,7 +49,7 @@ export function upsertTeam(
   return (
     db
       .query(
-        "INSERT INTO teams(id, org_id, slug, name, parent_team_id) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(org_id, slug) DO UPDATE SET name=COALESCE(?4, name), parent_team_id=?5 RETURNING id",
+        "INSERT INTO teams(id, org_id, slug, name, parent_team_id) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET org_id=?2, slug=?3, name=COALESCE(?4, name), parent_team_id=?5 RETURNING id",
       )
       .get(t.id, t.orgId, t.slug, t.name ?? null, t.parentTeamId ?? null) as { id: number }
   ).id;

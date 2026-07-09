@@ -117,6 +117,17 @@ describe("startScheduler", () => {
     expect(synced).toEqual(["premium-requests"]);
   });
 
+  it("jitter lower bound: rand()=0 fires at 0.9× the base interval", () => {
+    start({ rand: () => 0 });
+    ctx.bus.emit({ type: "auth.unlocked" });
+    clock.advance(60_000);
+    synced = [];
+    clock.advance(2.7 * HOUR - 1); // premium-requests: 3h × 0.9 = 2.7h
+    expect(synced).toEqual([]);
+    clock.advance(1);
+    expect(synced).toEqual(["premium-requests"]);
+  });
+
   it("mulberry32 yields deterministic values in [0, 1)", () => {
     const a = mulberry32(42);
     const b = mulberry32(42);

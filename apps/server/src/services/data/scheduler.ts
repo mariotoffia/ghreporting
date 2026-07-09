@@ -66,6 +66,9 @@ export function startScheduler(opts: {
     const warmup = timers.setInterval(() => {
       timers.clearInterval(warmup);
       handles.splice(handles.indexOf(warmup), 1);
+      // ticks are fire-and-forget: the shared octokit throttle paces concurrent
+      // syncs, and premium-requests enumerates members itself when org-people
+      // hasn't populated org_members yet — ordering is not load-bearing
       for (const c of opts.connectors()) {
         tick(c.meta.id);
         const baseMs = Math.max(c.meta.freshnessTtlHours / 2, 1) * 3_600_000;

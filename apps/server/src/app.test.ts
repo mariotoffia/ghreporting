@@ -3,7 +3,9 @@ import { buildApp } from "./app";
 import { AppError, NotFoundError, ValidationError } from "./kernel/errors";
 import type { ServiceContext } from "./kernel/ports";
 
-const testEnv = { ...process.env, GHR_DB_PATH: ":memory:" };
+// explicit minimal env: a developer's GHR_* variables must not change what
+// these tests compose (e.g. GHR_SCHEDULER registering timers)
+const testEnv = { HOME: "/tmp", GHR_DB_PATH: ":memory:" };
 
 describe("buildApp", () => {
   let ctx: ServiceContext | undefined;

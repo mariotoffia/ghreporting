@@ -57,6 +57,13 @@ describe("loadConfig", () => {
     expect(loadConfig({ HOME: "/h", GHR_PACKAGED: "true" }).packaged).toBe(false);
   });
 
+  it("scheduler is on when packaged or GHR_SCHEDULER=1, off by default in dev", () => {
+    expect(loadConfig({ HOME: "/h" }).scheduler).toBe(false);
+    expect(loadConfig({ HOME: "/h", GHR_SCHEDULER: "1" }).scheduler).toBe(true);
+    expect(loadConfig({ HOME: "/h", GHR_PACKAGED: "1" }).scheduler).toBe(true);
+    expect(loadConfig({ HOME: "/h", GHR_SCHEDULER: "0" }).scheduler).toBe(false);
+  });
+
   it("falls back to the default port for empty or non-numeric PORT", () => {
     expect(loadConfig({ HOME: "/h", PORT: "" }).port).toBe(8787);
     expect(loadConfig({ HOME: "/h", PORT: "abc" }).port).toBe(8787);

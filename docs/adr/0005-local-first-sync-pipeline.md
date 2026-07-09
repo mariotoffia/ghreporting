@@ -31,6 +31,9 @@ first** (opt-out per call with `{sync: false}`).
 - The local DB becomes the *only* long-term record of model usage — backups matter
   (documented in README once packaging lands).
 - Connectors carry natural-key discipline (DDD.md §3.2) so re-sync is idempotent.
+- Status note (E2): `sync_state.etag` and the client's If-None-Match support exist,
+  but no connector persists/replays ETags yet — snapshot datasets re-fetch whole
+  scopes each TTL. Wire it when request volume warrants (tracked for T11.x).
 
 ## Rejected alternatives
 

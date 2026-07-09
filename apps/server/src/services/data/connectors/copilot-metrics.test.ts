@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Gap } from "../ports";
+import { markSynced } from "../sync";
 import { copilotMetricsConnector } from "./copilot-metrics";
 import { connectorContext, fakeGitHub, ghError, TEST_NOW } from "./testutil";
 
@@ -25,6 +26,7 @@ const record = {
 
 const fixtures = {
   gets: {
+    "/orgs/acme": { id: 1, login: "acme" },
     "/orgs/acme/copilot/metrics/reports/organization-1-day?day=2026-07-01": {
       download_links: ["https://signed.example.com/r1.ndjson"],
       report_day: "2026-07-01",
@@ -76,7 +78,8 @@ describe("copilot-metrics connector", () => {
     const batches: unknown[] = [];
     for await (const b of c.fetch(gap, gh, ctx)) batches.push(b);
     expect(batches).toHaveLength(1); // only 2026-07-01 produced rows
-    expect(gh.calls.filter((l) => l.startsWith("GET"))).toHaveLength(2); // both days asked
+    // /orgs/acme + both report days asked
+    expect(gh.calls.filter((l) => l.startsWith("GET"))).toHaveLength(3);
   });
 
   it("double upsert stays idempotent and updates quantities", async () => {
@@ -96,6 +99,23 @@ describe("copilot-metrics connector", () => {
       }
     ).n;
     expect(n).toBe(1);
+  });
+
+  it("a day whose report has no download_links (204-style) is skipped", async () => {
+    const noLinks = structuredClone(fixtures);
+    noLinks.gets["/orgs/acme/copilot/metrics/reports/organization-1-day?day=2026-07-02"] =
+      {} as never;
+    const c = connector();
+    const batches: unknown[] = [];
+    for await (const b of c.fetch(gap, fakeGitHub(noLinks), ctx)) batches.push(b);
+    expect(batches).toHaveLength(1); // only 07-01
+  });
+
+  it("coverage: whole range when never synced, empty when fresh", () => {
+    const c = connector();
+    expect(c.coverage(ctx.db, q)).toEqual([{ scope: "acme", from: q.range.from, to: q.range.to }]);
+    markSynced(ctx.db, "copilot-metrics", gap, TEST_NOW);
+    expect(c.coverage(ctx.db, q)).toEqual([]);
   });
 
   it("select honors range, filter, and limit", async () => {

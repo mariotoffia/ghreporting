@@ -26,6 +26,9 @@ history (reports exist since 2025-10-10).
   `daily_active_users` → `engaged_users` (org totals, `model` NULL);
   per-model rows come from `totals_by_model_feature[]` summed by model, with
   `user_initiated_interaction_count` → `chats`.
+- `GitHubClient` lives in `services/data/ports.ts` (the Ports layer), not in the
+  adapter file T2.3 sketched: PLUGIN.md's canonical `DatasetConnector.fetch`
+  references the type, and a port must not be imported from an adapter module.
 - `GitHubClient` gains `download(url)`: the report links are signed URLs on a
   non-API host, and signed-URL hosts reject requests that also carry an
   `Authorization` header — so downloads deliberately send none. Downloads count

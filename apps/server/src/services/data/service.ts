@@ -7,7 +7,7 @@ import { orgPeopleConnector } from "./connectors/org-people";
 import { premiumRequestsConnector } from "./connectors/premium-requests";
 import { addDays } from "./connectors/util";
 import type { DatasetConnector, DatasetQuery, GitHubClient, ResultSet } from "./ports";
-import { startScheduler } from "./scheduler";
+import { type SchedulerTimers, startScheduler } from "./scheduler";
 import { readSyncState, syncGaps } from "./sync";
 
 const MAX_LIMIT = 1000;
@@ -37,6 +37,8 @@ export interface DataService extends MicroService {
 export function createDataService(opts: {
   gh: GitHubClient;
   connectors?: DatasetConnector[];
+  /** Test seam: deterministic timers/jitter for the background scheduler. */
+  schedulerControls?: { timers?: SchedulerTimers; rand?: () => number };
 }): DataService {
   const connectors = new Map<string, DatasetConnector>();
   let ctx: ServiceContext;
@@ -72,12 +74,25 @@ export function createDataService(opts: {
       throw new ValidationError("q.org must be a non-empty string");
     }
     const { from, to } = q.range ?? {};
-    if (typeof from !== "string" || typeof to !== "string" || from > to) {
-      throw new ValidationError("q.range.from must be ≤ q.range.to (ISO dates)");
+    const isoDay = /^\d{4}-\d{2}-\d{2}$/;
+    if (
+      typeof from !== "string" ||
+      typeof to !== "string" ||
+      !isoDay.test(from) ||
+      !isoDay.test(to) ||
+      from > to
+    ) {
+      throw new ValidationError("q.range must be ISO dates (YYYY-MM-DD) with from ≤ to");
+    }
+    for (const [key, value] of Object.entries(q.filter ?? {})) {
+      const values = Array.isArray(value) ? value : [value];
+      if (!values.every((v) => typeof v === "string")) {
+        throw new ValidationError(`q.filter.${key} must be a string or string array`);
+      }
     }
     const limit =
       q.limit === undefined
-        ? undefined
+        ? MAX_LIMIT // never unbounded through the route
         : Math.min(Math.max(1, Math.floor(Number(q.limit) || 1)), MAX_LIMIT);
     return { org: q.org, range: { from, to }, filter: q.filter, limit };
   }
@@ -91,6 +106,9 @@ export function createDataService(opts: {
       // tests pass their own connectors; production registers the built-ins
       const list = opts.connectors ?? builtinConnectors(() => ctx.config.now());
       for (const con of list) registerConnector(con);
+      if (ctx.config.scheduler && !ctx.config.org) {
+        ctx.log.info("scheduler disabled: GHR_ORG unset (a scheduled sync needs a scope)");
+      }
       if (ctx.config.scheduler && ctx.config.org) {
         const org = ctx.config.org;
         let unlocked = false;
@@ -106,6 +124,7 @@ export function createDataService(opts: {
             await syncGaps(connector(id), { org, range }, ctx, opts.gh);
           },
           unlocked: () => unlocked,
+          ...opts.schedulerControls,
         });
       }
     },

@@ -49,7 +49,8 @@ Directories marked `[T…]` arrive with that task in IMPLEMENTATION_PLAN.md.
 |----------|---------|---------|
 | `PORT` | `8787` | API server port |
 | `GHR_DB_PATH` | `~/.ghreporting/ghreporting.db` | SQLite location (tests use `:memory:`) |
-| `GHR_ORG` | — | Default GitHub org for the explorer |
+| `GHR_ORG` | — | Default GitHub org for the explorer; the background scheduler needs it as its sync scope |
+| `GHR_SCHEDULER` | off in dev (`1` enables; packaged builds are always on) | Background refresh of short-retention datasets — no-op without `GHR_ORG` |
 | `GHR_SECRET_BACKEND` | `keychain` on darwin, else `encrypted-file` | Secret store backend id |
 | `RUN_GH_LIVE` | unset | Set to `1` to run live GitHub integration tests |
 | `GH_TOKEN` | — | Token used **only** by live integration tests |

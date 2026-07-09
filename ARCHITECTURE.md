@@ -54,6 +54,11 @@ adapter module; it receives adapter instances through its `ServiceContext` or
 constructor, typed as ports. Violations are review findings (no arch-lint tool yet —
 see [LINT.md](LINT.md) §Architecture rules).
 
+Sanctioned exception: `adapters/db/dims.ts` — pure SQL helper functions over the
+injected `Database` (no I/O of their own). Connectors import them directly per
+[PLUGIN.md](PLUGIN.md) rule 3 so dimension rows stay consistent; they are ports in
+spirit, adapters by directory.
+
 Pragmatic deviation from textbook hexagonal, recorded here on purpose: ports that need
 server-only types (Hono, `bun:sqlite`'s `Database`) live in `apps/server/src/kernel`,
 not in `packages/domain`. The domain package stays runtime-agnostic so the browser can
@@ -180,6 +185,7 @@ orgs ─┬─ teams (parent_team_id → hierarchy) ─ team_members ─ users
              └ (day, org, user?, sku, model?, metric, quantity, unit,
                 multiplier, gross_amount_usd, net_amount_usd, source, raw)
 
+org_members (org ↔ user set) · copilot_seats (current seat state per org × user)
 sync_state · notifications · passkeys · credentials_meta · workbooks · bindings
 schema_migrations
 ```

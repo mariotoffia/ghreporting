@@ -109,7 +109,12 @@ export function orgPeopleConnector(now: () => Date): DatasetConnector {
         if (r.kind === "user") upsertUser(db, r);
       }
       const teams = rows.filter((r): r is Extract<Row, { kind: "team" }> => r.kind === "team");
+      // clear stale hierarchy links so a deleted-and-recreated team (same slug,
+      // new id) can be dropped without tripping parent FK checks; pass 2 relinks
+      db.query("UPDATE teams SET parent_team_id=NULL WHERE org_id=?1").run(orgId);
+      const dropStale = db.query("DELETE FROM teams WHERE org_id=?1 AND slug=?2 AND id<>?3");
       for (const t of teams) {
+        dropStale.run(orgId, t.slug, t.id);
         upsertTeam(db, { id: t.id, orgId, slug: t.slug, name: t.name, parentTeamId: null });
       }
       const setParent = db.query("UPDATE teams SET parent_team_id=?1 WHERE id=?2");

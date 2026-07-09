@@ -1664,7 +1664,10 @@ and serves; `make package-all` emits three binaries.
   aborts loudly past it.
 - Replay suite: `fetchImpl` fake that serves fixture files by URL pattern → per
   connector: coverage→fetch→upsert→select round-trip on `:memory:`, idempotent
-  double-upsert, columns match `meta.columns`.
+  double-upsert, columns match `meta.columns`. This is where the shared
+  `datasetConnectorConformance(id, factory, fixtureRows)` from PLUGIN.md rule 4
+  gets built — E2's per-connector unit tests assert the same behaviors inline
+  and fold into the shared suite here.
 - Live suite (`describe.skipIf(!(process.env.RUN_GH_LIVE === "1" && process.env.GH_TOKEN))`):
   asserts response *shape* (fields we map exist), never values; suite-end assertion
   `expect(gh.requestCount()).toBeLessThanOrEqual(50)`.

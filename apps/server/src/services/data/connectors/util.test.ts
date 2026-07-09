@@ -64,6 +64,54 @@ describe("rangeCoverage", () => {
     ]);
   });
 
+  it("a query disjoint from the watermark yields gaps that adjoin it (no hole)", () => {
+    // MIN/MAX widening in markSynced assumes contiguity: a gap that skipped
+    // the hole would mark never-fetched days as covered forever.
+    markSynced(db, "ds", { scope: "acme", from: "2026-07-01", to: "2026-07-08" }, TEST_NOW);
+    expect(
+      rangeCoverage(
+        db,
+        "ds",
+        { org: "acme", range: { from: "2026-08-01", to: "2026-08-05" } },
+        TTL,
+        TEST_NOW,
+      ),
+    ).toEqual([{ scope: "acme", from: "2026-07-09", to: "2026-08-05" }]);
+    expect(
+      rangeCoverage(
+        db,
+        "ds",
+        { org: "acme", range: { from: "2026-06-01", to: "2026-06-05" } },
+        TTL,
+        TEST_NOW,
+      ),
+    ).toEqual([{ scope: "acme", from: "2026-06-01", to: "2026-06-30" }]);
+  });
+
+  it("a disjoint later sync does not mark the skipped hole covered", () => {
+    markSynced(db, "ds", { scope: "acme", from: "2026-07-01", to: "2026-07-08" }, TEST_NOW);
+    for (const gap of rangeCoverage(
+      db,
+      "ds",
+      { org: "acme", range: { from: "2026-08-01", to: "2026-08-05" } },
+      TTL,
+      TEST_NOW,
+    )) {
+      markSynced(db, "ds", gap, TEST_NOW);
+    }
+    // the July 9 – Aug 5 stretch was part of the gap, so nothing was skipped:
+    // a mid-hole query is now legitimately covered because it was fetched
+    expect(
+      rangeCoverage(
+        db,
+        "ds",
+        { org: "acme", range: { from: "2026-07-15", to: "2026-07-20" } },
+        TTL,
+        TEST_NOW,
+      ),
+    ).toEqual([]);
+  });
+
   it("stale watermark re-opens the trailing TTL days", () => {
     const past = new Date(TEST_NOW.getTime() - 25 * 3_600_000);
     markSynced(db, "ds", { scope: "acme", from: "2026-07-01", to: "2026-07-08" }, past);

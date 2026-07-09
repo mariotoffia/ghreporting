@@ -50,14 +50,17 @@ function fakeConnector(id = "fake-ds", calls: string[] = []): DatasetConnector {
 
 // Minimal composition (like buildApp, minus the built-in data service) so the
 // fake connector owns /api/data in these tests.
-function buildHarness() {
+function buildHarness(env: Record<string, string> = {}) {
   const log = nullLogger();
   const db = openDatabase(":memory:");
   runMigrations(db, migrations);
   const { ctx, ...bind } = createContext({
     db,
     bus: createEventBus(log),
-    config: loadConfig({ GHR_DB_PATH: ":memory:" }),
+    config: {
+      ...loadConfig({ GHR_DB_PATH: ":memory:", ...env }),
+      now: () => new Date("2026-07-09T12:00:00.000Z"),
+    },
     log,
   });
   const kernel = createKernel(ctx);
@@ -179,6 +182,72 @@ describe("data service", () => {
     const ok = await post({ dataset: "fake-ds", q: { ...q, limit: 5000 }, sync: false });
     expect(ok.status).toBe(200);
     expect(calls).toEqual(["select:limit=1000"]);
+
+    calls.length = 0;
+    expect((await post({ dataset: "fake-ds", q, sync: false })).status).toBe(200);
+    expect(calls).toEqual(["select:limit=1000"]); // omitted limit is never unbounded
+
+    expect(
+      (await post({ dataset: "fake-ds", q: { ...q, range: { from: "banana", to: "cherry" } } }))
+        .status,
+    ).toBe(400); // non-date strings must not reach connectors
+    expect(
+      (await post({ dataset: "fake-ds", q: { ...q, filter: { day: [{ bad: 1 }] } } })).status,
+    ).toBe(400); // filter values must be strings
+  });
+
+  it("POST /sync validates its body like /query does", async () => {
+    await start(fakeConnector());
+    const post = (body: unknown) =>
+      harness.app.request("/api/data/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      });
+    expect((await post({ dataset: "fake-ds" })).status).toBe(400); // org missing
+    expect(
+      (
+        await post({
+          dataset: "fake-ds",
+          org: "acme",
+          range: { from: "2026-07-05", to: "2026-07-01" },
+        })
+      ).status,
+    ).toBe(400);
+    expect((await post({ org: "acme" })).status).toBe(400); // dataset missing
+    expect((await post("{not json")).status).toBe(400);
+  });
+
+  it("init wires the scheduler when GHR_SCHEDULER=1 and GHR_ORG are set; shutdown stops it", async () => {
+    harness = buildHarness({ GHR_SCHEDULER: "1", GHR_ORG: "acme" });
+    notes = [];
+    let nextId = 1;
+    const intervals = new Map<number, { fn: () => void }>();
+    const timers = {
+      setInterval: ((fn: () => void) => {
+        const id = nextId++;
+        intervals.set(id, { fn });
+        return id;
+      }) as unknown as typeof setInterval,
+      clearInterval: ((id: number) => {
+        intervals.delete(id);
+      }) as unknown as typeof clearInterval,
+    };
+    const calls: string[] = [];
+    const data = createDataService({
+      gh,
+      connectors: [fakeConnector("fake-ds", calls)],
+      schedulerControls: { timers, rand: () => 0.5 },
+    });
+    harness.kernel.register(data);
+    await harness.kernel.start(harness.app);
+    harness.ctx.bus.emit({ type: "auth.unlocked" });
+    for (const t of [...intervals.values()]) t.fn(); // fire the warm-up tick
+    await Bun.sleep(0); // let the fire-and-forget sync settle
+    // the scheduled sync ran the trailing 28-day window through the pipeline
+    expect(calls.slice(0, 3)).toEqual(["coverage", "fetch", "upsert"]);
+    await harness.kernel.stop();
+    expect(intervals.size).toBe(0); // shutdown cleared every timer
   });
 
   it("POST /sync fills gaps and reports the summary", async () => {

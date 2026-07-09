@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Gap } from "../ports";
+import { markSynced } from "../sync";
 import { billingUsageConnector } from "./billing-usage";
 import { connectorContext, fakeGitHub, ghError, TEST_NOW } from "./testutil";
 
@@ -116,6 +117,27 @@ describe("billing-usage connector", () => {
     const before = count();
     await syncOnce();
     expect(count()).toBe(before);
+  });
+
+  it("a month with an empty payload is skipped", async () => {
+    const empty = structuredClone(fixtures);
+    empty.gets[`${USAGE}?month=7&year=2026`] = {} as never;
+    const c = connector();
+    const batches: unknown[] = [];
+    for await (const b of c.fetch(gap, fakeGitHub(empty), ctx)) batches.push(b);
+    expect(batches).toHaveLength(0);
+  });
+
+  it("coverage: whole range when never synced, empty when fresh", () => {
+    const c = connector();
+    expect(c.coverage(ctx.db, q)).toEqual([{ scope: "acme", from: q.range.from, to: q.range.to }]);
+    markSynced(
+      ctx.db,
+      "billing-usage",
+      { scope: "acme", from: q.range.from, to: q.range.to },
+      TEST_NOW,
+    );
+    expect(c.coverage(ctx.db, q)).toEqual([]);
   });
 
   it("select honors filter and limit", async () => {

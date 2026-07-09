@@ -10,7 +10,7 @@ bounded context ([DDD.md](DDD.md)).
 |------|---------|
 | **Usage Fact** | One immutable, day-grained observation synced from GitHub: who used what, how much, and what it cost. The atom every report aggregates. |
 | **Product Path** | GitHub's billing hierarchy for a fact: `product / sku / model?` (e.g. `copilot / copilot_premium_request / gpt-4.1`). |
-| **Metric** | What a fact measures: `premium_requests`, `code_suggestions`, `seats`, … |
+| **Metric** | What a fact measures. Shipped names: `premium_requests` (org × model, day), `premium_requests_month` (user × model, month, landed on the month's last day), `usage` (billing-usage $ facts), `code_suggestions`, `code_acceptances`, `code_lines_suggested`, `code_lines_accepted`, `chats`, `engaged_users`. |
 | **Multiplier** | Model-specific factor GitHub applies to premium requests (0.33, 1, 10 …). |
 | **Included Allowance** | Premium requests covered by the plan before billing starts. |
 | **Premium Request** | GitHub's billing unit for Copilot AI model usage — the "AI credit" this tool reports on. |
@@ -29,6 +29,11 @@ bounded context ([DDD.md](DDD.md)).
 | **Scope** | The sub-stream a watermark tracks — normally the org login. |
 | **Coverage** | The answer to "which part of this query can the local store already serve?" |
 | **Stale serve** | Answering from local data after a sync failure, flagged `stale: true`. |
+| **Snapshot dataset** | A dataset whose local copy is current state replaced wholesale per sync (`org-people`, `copilot-seats`); its coverage is one whole-scope gap when older than the Freshness TTL. |
+| **Date-ranged dataset** | A dataset accumulated day by day (`copilot-metrics`, `premium-requests`, `billing-usage`); coverage diffs the query range against the Watermark. |
+| **Org Member** | A user belonging to the org (`org_members` set), independent of any team. |
+| **Seat** | A current Copilot seat assignment per (org, user) — state, not a Usage Fact. |
+| **Report download** | Fetching a usage-metrics report's signed URL without auth headers (`GitHubClient.download`, ADR 0012). |
 
 ## Workspace (`workspace` uService, `sheets`/`charts` features)
 

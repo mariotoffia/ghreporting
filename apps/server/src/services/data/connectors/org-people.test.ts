@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Gap } from "../ports";
+import { markSynced } from "../sync";
 import { orgPeopleConnector } from "./org-people";
 import { connectorContext, fakeGitHub, TEST_NOW } from "./testutil";
 
@@ -98,6 +99,28 @@ describe("org-people connector", () => {
     expect(rs.rows.map((r) => r[0])).toEqual(["mario"]);
   });
 
+  it("a team deleted and recreated under the same slug (new id) syncs cleanly", async () => {
+    await syncOnce();
+    const recreated = structuredClone(fixtures);
+    recreated.pages["/orgs/acme/teams"] = [
+      [
+        { id: 200, slug: "eng", name: "Engineering", parent: null },
+        { id: 101, slug: "web", name: "Web", parent: { id: 200, slug: "eng" } },
+      ],
+    ];
+    const c = connector();
+    for await (const b of c.fetch(gap, fakeGitHub(recreated), ctx)) c.upsert(ctx.db, b);
+    const rs = c.select(ctx.db, q);
+    expect(rs.rows).toEqual([
+      ["anna", null, "web", "Web", "eng"],
+      ["bob", null, null, null, null],
+      ["mario", null, "eng", "Engineering", null],
+    ]);
+    expect((ctx.db.query("SELECT id FROM teams WHERE slug='eng'").get() as { id: number }).id).toBe(
+      200,
+    );
+  });
+
   it("select honors filter and limit", async () => {
     await syncOnce();
     const c = connector();
@@ -113,5 +136,7 @@ describe("org-people connector", () => {
   it("coverage is one whole-scope gap until synced, then empty while fresh", async () => {
     const c = connector();
     expect(c.coverage(ctx.db, q)).toEqual([{ scope: "acme", from: q.range.from, to: q.range.to }]);
+    markSynced(ctx.db, "org-people", gap, TEST_NOW);
+    expect(c.coverage(ctx.db, q)).toEqual([]);
   });
 });
