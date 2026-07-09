@@ -135,6 +135,24 @@ describe("rangeCoverage", () => {
     ).toEqual([{ scope: "acme", from: "2026-07-01", to: "2026-07-10" }]);
   });
 
+  it("merge keeps the full leading gap when the trailing gap nests inside it", () => {
+    // TTL 72h → reopen 3 days on a 1-day watermark: coveredTo (07-03) lies
+    // before synced_from (07-06), and the query ends inside the overlap. The
+    // merged gap must still adjoin the watermark (07-05), not stop at q.to —
+    // else markSynced's widening would mark 07-05 covered without a fetch.
+    const past = new Date(TEST_NOW.getTime() - 80 * 3_600_000);
+    markSynced(db, "ds", { scope: "acme", from: "2026-07-06", to: "2026-07-06" }, past);
+    expect(
+      rangeCoverage(
+        db,
+        "ds",
+        { org: "acme", range: { from: "2026-07-01", to: "2026-07-04" } },
+        72,
+        TEST_NOW,
+      ),
+    ).toEqual([{ scope: "acme", from: "2026-07-01", to: "2026-07-05" }]);
+  });
+
   it("6h TTL still re-opens at least one day", () => {
     const past = new Date(TEST_NOW.getTime() - 7 * 3_600_000);
     markSynced(db, "ds", { scope: "acme", from: "2026-07-01", to: "2026-07-08" }, past);
