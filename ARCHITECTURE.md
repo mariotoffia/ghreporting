@@ -38,6 +38,12 @@ never a live query backend.
              GitHub REST    macOS Keychain   ~/.ghreporting/ghreporting.db
 ```
 
+A sixth uService, **reports** (E8.5), sits beside `workspace` on the same shared DB: it
+stores portable `ReportDefinition` documents (CRUD, export/import) and seeds the Copilot
+Spend report on init. It owns no adapter — reports execute in the browser, which compiles
+a definition and calls the `data` service per panel (ADR
+[0014](docs/adr/0014-report-designer-standalone-definitions.md)).
+
 ## 2. Hexagonal Layers & Dependency Rule
 
 | Layer | Lives in | May import |
@@ -249,7 +255,14 @@ apps/web/src/
     explorer/      dataset catalog, coverage, preview table, "insert into sheet"
     sheets/        SheetHost — Univer workbook, range read/write, edit events
     charts/        ChartHost — ECharts panel (thin ~20-line wrapper, no wrapper lib)
+    reports/       Designer (CRUD + import/export) · ReportView (compile → query →
+                   HTML tables + ChartHost; re-runs on parameter change)
 ```
+
+The `reports` feature stores nothing itself — it reads a `ReportDefinition` from
+`/api/reports/:id`, `compile()`s it (shared-kernel `packages/domain/report.ts`), and
+issues one `/api/data/query` per panel. Panels render as HTML tables, not Univer sheets,
+so Reporting stays off the heavy sheet path.
 
 - **Server state** via TanStack Query (`/api/data/*`, `/api/notifications`, …);
   **UI state** (bindings, selections) via one zustand store. No other state libraries.

@@ -19,6 +19,9 @@ implementation state is tracked in IMPLEMENTATION_PLAN.md, not here.
 | [0010](0010-single-binary-packaging.md) | Single-binary packaging with `bun build --compile` | accepted |
 | [0011](0011-biome-lint-format.md) | Biome for lint + format; `tsc --noEmit` as vet | accepted |
 | [0012](0012-copilot-metrics-reports-api.md) | Copilot metrics via the usage-metrics reports API (legacy API sunset) | accepted |
+| [0013](0013-insert-flow-auto-anchor.md) | Insert-into-sheet uses auto-anchor placement (dialog deferred) | accepted |
+| [0014](0014-report-designer-standalone-definitions.md) | Report designer: standalone, parameterized report definitions | accepted |
+| [0013](0013-insert-flow-auto-anchor.md) | Insert-into-sheet uses auto-anchor placement (dialog deferred) | accepted |
 
 ## Numbering
 

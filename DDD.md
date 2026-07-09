@@ -10,7 +10,8 @@ Bounded contexts, aggregates, and invariants. Words used here are defined in
 |---------|------|----------------|------------------|
 | Shared Kernel | shared | `packages/domain` | Types and pure math every context agrees on |
 | Catalog & Sync | **core** | `data` uService | Own the local copy of GitHub usage data and its freshness |
-| Workspace | core | `workspace` uService + web `sheets`/`charts` | Turn facts into sheets, charts, and saved reports |
+| Workspace | core | `workspace` uService + web `sheets`/`charts` | Turn facts into sheets and linked charts |
+| Reporting | core | `reports` uService + web `reports` | Store, parameterize, and execute reports as portable definitions |
 | Credentials | supporting | `credentials` uService | Obtain, validate, and store secrets for external APIs |
 | Access | supporting | `auth` uService | Prove the human is the owner; unlock secrets |
 | Notifications | generic | `notifications` uService | Tell the human something needs attention |
@@ -25,15 +26,18 @@ keep, and the sheet/chart workbench on top). Everything else exists to serve tha
             │            every context imports it, it imports nothing │
             └─────────────────────────────────────────────────────────┘
  Access ──unlocks──▶ Credentials ──provides token──▶ Catalog & Sync ──facts──▶ Workspace
-    │                     │                              │                        │
-    └──────── events ─────┴──────────── events ──────────┴──── events ───────────┘
-                                        ▼
-                                  Notifications
+    │                     │                              │        │               │
+    │                     │                              │     (queries)          │
+    └──────── events ─────┴──────────── events ──────────┴───────┼─ events ───────┘
+                                        ▼                        ▼
+                                  Notifications              Reporting
 ```
 
 Relationships are **event-driven** (`AppEvent` bus) or **port calls** — never direct
 imports between services. Notifications is a downstream generic context: everyone
-publishes to it; it depends on no one.
+publishes to it; it depends on no one. Reporting stores definitions only; it reaches
+Catalog & Sync **from the browser at execution time** (a `/api/data/query` per panel),
+never by importing the `data` service — the frontend orchestrates.
 
 ## 3. Aggregates, entities, value objects per context
 
@@ -112,6 +116,21 @@ until a verified assertion emits `auth.unlocked`.
 Levels: `info | warning | error`. Lifecycle: `active → read → dismissed`; dismissed
 notifications re-activate if the condition fires again (fresh `updated_at`).
 
+### 3.7 Reporting — core
+
+| Element | Kind | Identity | Invariants |
+|---------|------|----------|-----------|
+| `ReportDefinition` | aggregate root | uuid (seed: stable `copilot-spend`) | one self-contained JSON document; validated on every write and import; never persists a workbook |
+| `ReportPanel` | entity (child) | `id`, unique within the definition | names exactly one dataset; its query's `{{placeholders}}` reference declared parameters only |
+| `ReportParameter` | value object | `name`, unique | non-empty name; carries a default; substituted at execution |
+| `ExportEnvelope` | value object | — | versioned (`kind: "ghreporting.report"`, `version: 1`); import re-validates before insert under a new id |
+
+The aggregate lives in `packages/domain` (`report.ts`) so server and web validate and
+compile it identically. `compile(def, values)` is a pure function — no I/O.
+Invariants: a Report **is not** a Workbook (no Univer snapshot, no `bindings` rows); the
+definition is the only source of truth and the rendered view is derived and disposable;
+execution runs in the browser, never server-side.
+
 ## 4. Invariant summary (one line each)
 
 1. Domain package imports nothing.
@@ -123,6 +142,8 @@ notifications re-activate if the condition fires again (fresh `updated_at`).
 7. Notifications dedupe by `key`.
 8. Services communicate via events and ports, never imports.
 9. A Binding is the only coupling between a sheet and a chart.
+10. A Report is a validated, parameterized definition — never a persisted workbook; it
+    executes in the browser, and every panel placeholder resolves to a declared parameter.
 
 ## 5. Where to read more
 

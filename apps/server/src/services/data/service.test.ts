@@ -159,6 +159,22 @@ describe("data service", () => {
     expect(list[0]?.coverage[0]).toMatchObject({ scope: "acme", status: "idle" });
   });
 
+  it("GET /config returns null org when GHR_ORG is unset", async () => {
+    await start(fakeConnector());
+    const res = await harness.app.request("/api/data/config");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ org: null });
+  });
+
+  it("GET /config exposes the configured org for the explorer prefill", async () => {
+    harness = buildHarness({ GHR_ORG: "acme" });
+    harness.bind.bindNotify(() => {});
+    harness.kernel.register(createDataService({ gh, connectors: [fakeConnector()] }));
+    await harness.kernel.start(harness.app);
+    const res = await harness.app.request("/api/data/config");
+    expect(await res.json()).toEqual({ org: "acme" });
+  });
+
   it("POST /query validates org and range and clamps limit to 1000", async () => {
     const calls: string[] = [];
     await start(fakeConnector("fake-ds", calls));

@@ -44,7 +44,17 @@ bounded context ([DDD.md](DDD.md)).
 | **Range** | A rectangular cell region, A1-notation (e.g. `Sheet1!A1:D200`). |
 | **Binding** | The mediator triple: sheet range ⇄ dataset query ⇄ optional chart spec. The only legal coupling between sheet and chart. |
 | **Chart Spec** | Serializable ECharts option template rendered by a ChartHost. |
-| **Report** | A workbook template shipped with the app (first: Copilot spend per model/user). |
+
+## Reporting (`reports` uService)
+
+| Term | Meaning |
+|------|---------|
+| **Report** | A stored, parameterized **Report Definition** that executes into a read-only report view. Not a workbook — it persists no Univer snapshot; the definition is the only source of truth. |
+| **Report Definition** | The declarative, portable JSON spec of a Report: its parameters and panels. What the store holds and export/import moves. |
+| **Panel** | One unit of a Report's structure: a dataset + parameterized query + optional pivot transform + optional Chart Spec. Renders as a table and/or chart. A Panel is a Binding without a persisted sheet range. |
+| **Parameter** | A named Report input (org, date range, filter) with a default, substituted into panel queries at execution. Referenced in a query as `{{name}}`. |
+| **Execution** | Compiling a Report Definition + parameter values into a build-plan, then running one data query per panel. Frontend-orchestrated; the server never executes a report. |
+| **Export / Import** | Moving a Report Definition in/out of the app as a versioned JSON envelope. |
 
 ## Credentials (`credentials` uService)
 

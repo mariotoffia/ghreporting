@@ -21,6 +21,7 @@ import { githubPatProvider } from "./services/credentials/providers/github-pat";
 import { createCredentialsService } from "./services/credentials/service";
 import { createDataService } from "./services/data/service";
 import { createNotificationsService } from "./services/notifications/service";
+import { createWorkspaceService } from "./services/workspace/service";
 
 /**
  * The composition root: build config, logger, bus, DB, and the kernel, wire the
@@ -107,6 +108,9 @@ export function buildApp(
   kernel.register(credentials);
   kernel.register(auth);
   kernel.register(createDataService({ gh }));
+  // workspace last: it only owns the workbooks/bindings tables and depends on
+  // nothing but the shared DB (DDD.md §3.3), so registration order is cosmetic here.
+  kernel.register(createWorkspaceService());
 
   app.get("/api/health", (c) => c.json({ status: "ok", service: "ghreporting" }));
   wireErrorEnvelope(app, log);

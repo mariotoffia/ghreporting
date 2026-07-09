@@ -1,0 +1,181 @@
+/* Minimal shell styling — enough to read the UI, no framework (ponytail: swap for
+   a design system if the app grows a visual identity). */
+:root {
+  --info: #2563eb;
+  --warning: #d97706;
+  --error: #dc2626;
+  --line: #e5e7eb;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #111827;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.login,
+.splash {
+  max-width: 28rem;
+  margin: 6rem auto;
+  padding: 2rem;
+  text-align: center;
+}
+.login .error {
+  color: var(--error);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-weight: 700;
+}
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  flex: 1;
+}
+.tab.active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.banner-error {
+  background: var(--error);
+  color: white;
+  padding: 0.5rem 1rem;
+}
+
+.bell {
+  position: relative;
+}
+.bell-badge {
+  margin-left: 0.15rem;
+  background: var(--error);
+  color: white;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  font-size: 0.75rem;
+}
+.bell-warning .bell-badge {
+  background: var(--warning);
+}
+.bell-info .bell-badge {
+  background: var(--info);
+}
+.notif-panel {
+  position: absolute;
+  right: 0;
+  top: 2rem;
+  width: 24rem;
+  max-height: 70vh;
+  overflow: auto;
+  background: white;
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+}
+.notif-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.notif {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+.notif-read {
+  opacity: 0.6;
+}
+.notif-text {
+  flex: 1;
+}
+.notif-text time {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.explorer {
+  padding: 1rem;
+}
+.catalog {
+  width: 100%;
+  border-collapse: collapse;
+}
+.catalog th,
+.catalog td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.catalog .muted {
+  color: #6b7280;
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+}
+.catalog .actions {
+  display: flex;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+.link {
+  background: none;
+  border: none;
+  color: var(--info);
+  font: inherit;
+  padding: 0;
+}
+.preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.preview th,
+.preview td {
+  border: 1px solid var(--line);
+  padding: 0.25rem 0.5rem;
+}
+.preview-stale {
+  color: var(--warning);
+}
+
+/* Sheets (E7). Univer fills its container, so .sheet-host needs explicit size. */
+.workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  min-height: 0;
+}
+.sheet-host {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid var(--line);
+}
+.workbench-loading {
+  color: var(--muted, #888);
+}
+.workbench-error {
+  color: var(--error, #c00);
+  background: var(--error-bg, #fdecea);
+  border: 1px solid var(--error, #c00);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  margin: 0;
+}

@@ -101,18 +101,18 @@ Status: ✅ done · ⬜ open · (opt) optional.
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T6.1 | App shell, router, API client | [details](IMPLEMENTATION_PLAN_DETAILS.md#t61-app-shell-router-api-client) | T0.2 | ⬜ |
-| T6.2 | Login and first-run setup UI | [details](IMPLEMENTATION_PLAN_DETAILS.md#t62-login-and-first-run-ui) | T6.1, T4.2 | ⬜ |
-| T6.3 | Notifications UI | [details](IMPLEMENTATION_PLAN_DETAILS.md#t63-notifications-ui) | T6.1, T5.2 | ⬜ |
-| T6.4 | Data explorer | [details](IMPLEMENTATION_PLAN_DETAILS.md#t64-data-explorer) | T6.1, T2.5e | ⬜ |
+| T6.1 | App shell, router, API client | [details](IMPLEMENTATION_PLAN_DETAILS.md#t61-app-shell-router-api-client) | T0.2 | ✅ |
+| T6.2 | Login and first-run setup UI | [details](IMPLEMENTATION_PLAN_DETAILS.md#t62-login-and-first-run-ui) | T6.1, T4.2 | ✅ |
+| T6.3 | Notifications UI | [details](IMPLEMENTATION_PLAN_DETAILS.md#t63-notifications-ui) | T6.1, T5.2 | ✅ |
+| T6.4 | Data explorer | [details](IMPLEMENTATION_PLAN_DETAILS.md#t64-data-explorer) | T6.1, T2.5e | ✅ |
 
 ### E7 — Sheets
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T7.1 | Workspace uService (workbooks, bindings) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t71-workspace-uservice) | T2.2 | ⬜ |
-| T7.2 | SheetHost (Univer embed, snapshots) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t72-sheethost-univer-embed) | T6.1, T7.1 | ⬜ |
-| T7.3 | Binding store and insert-into-sheet flow | [details](IMPLEMENTATION_PLAN_DETAILS.md#t73-binding-store-and-insert-flow) | T7.2, T6.4 | ⬜ |
+| T7.1 | Workspace uService (workbooks, bindings) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t71-workspace-uservice) | T2.2 | ✅ |
+| T7.2 | SheetHost (Univer embed, snapshots) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t72-sheethost-univer-embed) | T6.1, T7.1 | ✅ |
+| T7.3 | Binding store and insert-into-sheet flow | [details](IMPLEMENTATION_PLAN_DETAILS.md#t73-binding-store-and-insert-flow) | T7.2, T6.4 | ✅ |
 | T7.4 | Custom GHDATA() sheet formula | [details](IMPLEMENTATION_PLAN_DETAILS.md#t74-ghdata-formula) | T7.3 | ⬜ (opt) |
 
 ### E8 — Charts
@@ -122,12 +122,25 @@ Status: ✅ done · ⬜ open · (opt) optional.
 | T8.1 | ChartHost (ECharts wrapper, chart specs) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t81-charthost) | T7.3 | ⬜ |
 | T8.2 | Bidirectional sheet⇄chart link | [details](IMPLEMENTATION_PLAN_DETAILS.md#t82-bidirectional-sheet-chart-link) | T8.1 | ⬜ |
 
+### E8.5 — Report designer (`reports` uService)
+
+Reports as **data, not code**: a stored, parameterized Report Definition that the
+frontend compiles and executes into a read-only view. Standalone store (not workbooks);
+export/import; list/edit/delete. See [ADR 0014](docs/adr/0014-report-designer-standalone-definitions.md).
+
+| ID | Task | Details | Depends | Status |
+|----|------|---------|---------|--------|
+| T8.5.1 | Domain: ReportDefinition, validate, compile, export envelope | [details](IMPLEMENTATION_PLAN_DETAILS.md#t851-report-domain) | T1.1 | ⬜ |
+| T8.5.2 | `reports` uService: schema, CRUD, export/import, seed-on-init | [details](IMPLEMENTATION_PLAN_DETAILS.md#t852-reports-uservice) | T8.5.1, T2.2 | ⬜ |
+| T8.5.3 | Web: report designer (list/create/edit/delete, import/export) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t853-report-designer-ui) | T8.5.2, T6.1 | ⬜ |
+| T8.5.4 | Web: ReportView execution (compile → query → table/chart, param re-run) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t854-reportview-execution) | T8.5.1, T8.1, T2.5d | ⬜ |
+
 ### E9 — First report: Copilot model spend
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
 | T9.1 | Spend aggregation views and report queries | [details](IMPLEMENTATION_PLAN_DETAILS.md#t91-spend-aggregation-views) | T2.5d, T2.5e | ⬜ |
-| T9.2 | Shipped report template and validation | [details](IMPLEMENTATION_PLAN_DETAILS.md#t92-shipped-report-template) | T9.1, T8.2 | ⬜ |
+| T9.2 | Seed the Copilot Spend Report Definition and validate | [details](IMPLEMENTATION_PLAN_DETAILS.md#t92-seed-copilot-spend-report) | T9.1, T8.5.4 | ⬜ |
 
 ### E10 — Packaging
 
@@ -147,8 +160,12 @@ Status: ✅ done · ⬜ open · (opt) optional.
 ## Suggested order
 
 T1.1→T1.5 · T2.1→T2.2 · T5.1 · T3.1→T3.4 · T2.3→T2.4 · T4.1→T4.2 · T5.2 ·
-T2.5a→e · T2.6 · T6.1→T6.4 · T7.1→T7.3 · T8.1→T8.2 · T9.1→T9.2 · T11.1→T11.3 ·
-T10.1→T10.2 · (T7.4 whenever).
+T2.5a→e · T2.6 · T6.1→T6.4 · T7.1→T7.3 · T8.1→T8.2 · T8.5.1→T8.5.4 · T9.1→T9.2 ·
+T11.1→T11.3 · T10.1→T10.2 · (T7.4 whenever).
+
+E8.5 depends only on T8.1 (ChartHost) + the premium-requests datasets — not on the
+Univer sheet path (E7) or the bidirectional link (T8.2): report panels render as HTML
+tables, not sheets.
 
 The one intentional cycle-breaker: T2.3 (GitHub client) needs a token from the
 credentials service (T3.4); until T3.4 lands, T2.3's tests inject a fake token

@@ -133,6 +133,9 @@ export function createDataService(opts: {
       unsubscribeUnlock?.();
     },
     routes(app) {
+      // The explorer prefills its org input from the configured scope (GHR_ORG).
+      app.get("/config", (c) => c.json({ org: ctx.config.org ?? null }));
+
       app.get("/datasets", (c) =>
         c.json(
           [...connectors.values()].map((con) => ({

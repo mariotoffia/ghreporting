@@ -1491,13 +1491,187 @@ highlights; no flicker loops.
 
 ---
 
+## E8.5 Report designer
+
+Reports become **data, not code**. A `ReportDefinition` is a self-contained,
+parameterized JSON document the `reports` uService stores; the frontend **compiles** it
+(substitutes parameter values) and **executes** it (one data query per panel), rendering
+a read-only view of tables + charts. No workbook is persisted — the definition is the
+only source of truth. This epic replaces the hardcoded `copilotSpend.ts` builder that
+T9.2 used to describe.
+**Refs for the whole epic** ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting, design doc
+`docs/superpowers/specs/2026-07-09-report-designer-design.md`.
+
+### T8.5.1 Report domain
+
+**Goal** The `ReportDefinition` shared-kernel aggregate: types, invariants, compile,
+export envelope — zero-dependency and pure, so both the server (validate on write/import)
+and the web designer (validate while editing) use the same code.
+**Files** create `packages/domain/src/report.ts`; test `report.test.ts` beside it; export
+from the package index.
+**Produces**
+
+```ts
+export interface ReportParameter {
+  name: string;                        // referenced as "{{name}}" inside a panel query
+  kind: "org" | "dateRange" | "string" | "number";
+  default: unknown;
+}
+export interface ReportPanel {
+  id: string;
+  title: string;
+  dataset: string;                     // exactly one dataset per panel
+  query: Record<string, unknown>;      // DatasetQuery with "{{param}}" placeholders; opaque here
+  transform?: { pivot: { x: string; series: string; value: string } };
+  chartSpec?: Record<string, unknown>; // ChartSpec; opaque here (ChartHost validates deeply)
+}
+export interface ReportDefinition {
+  version: 1;
+  parameters: ReportParameter[];
+  panels: ReportPanel[];
+}
+export interface BuildPlan { panels: Array<Omit<ReportPanel, never>>; }  // query placeholders resolved
+export interface ExportEnvelope {
+  kind: "ghreporting.report";
+  version: 1;
+  name: string;
+  description: string | null;
+  definition: ReportDefinition;
+}
+
+export function validateDefinition(json: unknown): ReportDefinition;
+export function compile(def: ReportDefinition, values: Record<string, unknown>): BuildPlan;
+export function toExport(name: string, description: string | null, def: ReportDefinition): ExportEnvelope;
+export function parseExport(json: unknown): { name: string; description: string | null; definition: ReportDefinition };
+```
+
+`validateDefinition` throws `ValidationError` (reuse the domain error; keep the package
+dependency-free) when any of these fail: `version !== 1`; a parameter `name` is empty or
+duplicated; a panel `id` is empty or duplicated; a panel `dataset` is empty; a
+`{{placeholder}}` appearing anywhere in a panel `query` (recurse string values) names a
+parameter that is not declared. It does **not** inspect the shape of `query`/`chartSpec`
+beyond placeholder scanning — the data service and `ChartHost` own that.
+`compile` deep-clones each panel and replaces `{{name}}` tokens in string query values
+with `values[name] ?? parameter.default`; non-placeholder values pass through untouched.
+Pure — no clock, no I/O.
+`toExport`/`parseExport` wrap/unwrap the versioned `ExportEnvelope`; `parseExport`
+rejects a wrong `kind`/`version` and then runs `validateDefinition`.
+**Tests** accept a valid definition; reject each invariant violation (unbound placeholder,
+dup param names, dup panel ids, empty dataset, wrong version) with the right message;
+`compile` substitutes declared params, applies defaults for omitted values, and leaves a
+literal `"{{"`-free value intact; nested/array query values are recursed; export
+round-trips (`parseExport(JSON.parse(JSON.stringify(toExport(...))))` deep-equals input).
+**Done when** green; `packages/domain` still declares zero `dependencies`.
+**Refs** DDD.md §3.1/§3.7, ARCHITECTURE.md §2 dependency rule.
+
+### T8.5.2 reports uService
+
+**Goal** Persist Report Definitions and move them in/out of the app.
+**Files** create `apps/server/src/services/reports/service.ts` (test beside); migration
+`apps/server/src/adapters/db/migrations/0004_reports.ts` (+ index entry); a committed seed
+`apps/server/src/services/reports/seed/copilot-spend.json`; lift the shared write-guards
+(`jsonObject`, `nonEmpty`, a byte-size cap) out of `workspace/service.ts` into
+`apps/server/src/kernel/http.ts` and import them from both services; register the service
+in the composition root (`app.ts`), init order after `data`.
+
+Migration `0004_reports.ts` (0001–0003 are taken):
+
+```sql
+CREATE TABLE reports (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT,
+  definition  TEXT NOT NULL,   -- JSON ReportDefinition
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+```
+
+**Produces** routes under `/api/reports` (JSON, ids `crypto.randomUUID()`, time from
+`ctx.config.now()`):
+`GET /reports` → `[{id, name, description, updated_at}]` (no `definition` body);
+`POST /reports {name, description?, definition}` → `validateDefinition(definition)` then
+insert; `GET /reports/:id` → full row incl. parsed `definition`;
+`PUT /reports/:id {name?, description?, definition?}` → validate `definition` when present,
+validate-all-before-write (no half-applied update); `DELETE /reports/:id`;
+`GET /reports/:id/export` → `toExport(...)` with
+`Content-Disposition: attachment; filename="<name>.report.json"`;
+`POST /reports/import {envelope}` → `parseExport` → insert under a **new id**.
+Definition size cap 1 MiB (`ValidationError` past it). Follow the workspace service's
+TOCTOU discipline: read the request body (the only `await`) first, then run the existence
+check + writes with no yield between them.
+**Seed on init** if the `reports` table has no row whose `id` equals the seed's stable id
+(`copilot-spend`), `INSERT` the committed `seed/copilot-spend.json` (validated through
+`validateDefinition`). Idempotent — re-running init never duplicates or overwrites a
+user-edited seed.
+**Tests** CRUD round-trips; `GET /reports` omits `definition`; `POST` with an invalid
+definition → 400 (relies on T8.5.1); `PUT` partial update leaves other fields intact;
+export→import yields a new id with equal definition; import of a wrong-`kind` envelope →
+400; seed-on-init inserts once and is idempotent across two inits on the same DB; size
+guard. Open `new Database(":memory:")` + run migrations in `beforeEach` per TESTS.md.
+**Done when** green; `wc -l service.ts` ≤ 500; `workspace/service.ts` still ≤ 500 after
+the helper extraction and imports the shared guards.
+**Refs** T8.5.1, T7.1 (service shape to mirror), T2.1 migration runner, TESTS.md.
+
+### T8.5.3 Report designer UI
+
+**Goal** List, create, edit, delete, import, and export reports in the browser.
+**Files** create `apps/web/src/features/reports/api.ts` (typed client over
+`/api/reports`, using `lib/api.ts`), `reports/Designer.tsx` (list + editor),
+`reports/panelForm.ts` (pure: build/validate a `ReportPanel` from form fields, reusing
+domain `validateDefinition` on the assembled definition); a "Reports" entry in the shell
+nav; tests `panelForm.test.ts` and a `Designer.test.tsx` smoke.
+**Produces** a list view (name, description, updated_at, row actions: open, edit, delete,
+export); a "New report" / edit form that assembles a `ReportDefinition` (parameters +
+panels: dataset picker fed by `GET /api/data/catalog`, query fields, optional chartSpec)
+and `POST`/`PUT`s it; **Import** (file input → `POST /reports/import`) and **Export**
+(anchor to `GET /reports/:id/export`, browser downloads the attachment). Server state via
+TanStack Query; validation errors from the domain surface inline before submit.
+**Tests** `panelForm` builds a valid panel and rejects a bad one (delegates to the domain
+validator — assert the error path); Designer smoke: list renders from mocked api, delete
+calls the endpoint and invalidates the query.
+**Done when** manual: create a report with one panel, reload — it persists; export it,
+delete it, re-import the file — it reappears with a new id.
+**Refs** T8.5.1, T8.5.2, ARCHITECTURE.md §7, T6.1 api client.
+
+### T8.5.4 ReportView execution
+
+**Goal** Run a stored report and show it — the "execute" half.
+**Files** create `apps/web/src/features/reports/ReportView.tsx`,
+`reports/execute.ts` (pure orchestration helper); test `execute.test.ts`.
+**Produces**
+
+- `execute.ts`: `planQueries(def, paramValues): Array<{panelId, dataset, query}>` =
+  `compile(def, paramValues).panels.map(...)` — the pure step that turns a definition +
+  current parameters into the exact data queries to issue. Also `applyPivot(rows, cols,
+  pivot)` reused from the T9.2 pivot helper (long→wide, missing cells → 0).
+- `ReportView.tsx`: `GET /api/reports/:id` → render parameter controls from
+  `definition.parameters` (org select, `<input type="date">` range) seeded with defaults →
+  `planQueries` → one `POST /api/data/query {dataset, query, sync: true}` per panel
+  (TanStack Query, keyed by `[panelId, paramValues]`) → render each panel as an HTML
+  table (reuse `explorer/Preview` + `explorer/format`) and, when `chartSpec` is present,
+  a `ChartHost` (T8.1) fed by the panel's columns/rows (pivoted first when
+  `transform.pivot` is set). Changing a parameter re-runs **only the affected panel
+  queries** (query-key change). Sync progress and background-refresh invalidation ride the
+  existing `/api/notifications/stream` — no new SSE.
+**Tests** `planQueries` produces one query per panel with placeholders resolved;
+`applyPivot` matrix (missing month×series → 0, ordering stable); ReportView issues exactly
+one data query per panel against a mocked api and re-queries only the changed panel when a
+parameter updates.
+**Done when** manual: open the seeded Copilot Spend report, change the date range, tables
+and charts update; no full-page reload.
+**Refs** T8.5.1, T8.1 ChartHost, T6.4 Preview/format, ARCHITECTURE.md §7.
+
+---
+
 ## E9 First report
 
 ### T9.1 Spend aggregation views
 
 **Goal** SQL views answering "spend per model / user / team / month".
-**Files** create `apps/server/src/adapters/db/migrations/0003_spend_views.ts`
-(+ index entry); register derived datasets in the data service; tests beside.
+**Files** create `apps/server/src/adapters/db/migrations/0005_spend_views.ts`
+(0003 = copilot_seats, 0004 = reports are taken; + index entry); register derived
+datasets in the data service; tests beside.
 
 ```sql
 CREATE VIEW v_premium_spend_user_model_month AS
@@ -1538,30 +1712,34 @@ once in user view; derived dataset select honors filters; org-level facts
 returns correct aggregates from seeded facts.
 **Refs** ARCHITECTURE.md §5, T2.5d, domain `premiumRequestCost`.
 
-### T9.2 Shipped report template
+### T9.2 Seed Copilot Spend report
 
-**Goal** The requirement-10 deliverable: open the app, get model spend per user.
-**Files** create `apps/web/src/features/reports/copilotSpend.ts` (template builder —
-pure: returns the workbook name, binding payloads, and chart specs), a "Reports"
-button in the shell; test `copilotSpend.test.ts` on the builder output.
-**Produces** one click builds (if absent) workbook **"Copilot Spend"**:
+**Goal** The requirement-10 deliverable, now as **data**: open the app, get model spend
+per user from a seeded Report Definition executed by the generic E8.5 engine — no
+hardcoded builder.
+**Files** author `apps/server/src/services/reports/seed/copilot-spend.json` (the seed the
+`reports` service loads on init, T8.5.2); test `copilot-spend.seed.test.ts` asserting the
+JSON passes `validateDefinition` and compiles to the expected panels.
+**Produces** a `ReportDefinition` (stable id `copilot-spend`) with:
 
-- Sheet `Spend` ← binding `{dataset: "spend-by-user-model-month", query: {org,
-  range: last 6 full months}}`, chartSpec `{type: "stacked-bar", xColumn: "month",
-  seriesColumns: [per-model net_usd columns]}` — the builder pivots long→wide first:
-  `pivot(rows, x: "month", series: "model", value: "net_usd")` (pure helper, tested:
-  missing month×model combos become 0).
-- Sheet `ByUser` ← same dataset filtered to the latest closed month, chartSpec
+- Parameters: `org` (kind `org`), `range` (kind `dateRange`, default = last 6 full months).
+- Panel `spend` ← `{dataset: "spend-by-user-model-month", query: {org: "{{org}}",
+  range: "{{range}}"}}`, `transform.pivot {x: "month", series: "model", value: "net_usd"}`,
+  chartSpec `{type: "stacked-bar", xColumn: "month", seriesColumns: [per-model net_usd]}`.
+- Panel `byUser` ← same dataset filtered to the latest closed month, chartSpec
   `{type: "bar", xColumn: "user", seriesColumns: ["net_usd"]}`.
-- Sheet `ByTeam` ← `spend-by-team-month`, table only.
+- Panel `byTeam` ← `{dataset: "spend-by-team-month", query: {org: "{{org}}",
+  range: "{{range}}"}}`, table only (no chartSpec).
 
-Flow on open: `POST /api/data/sync {dataset: "premium-requests"}` (progress via sse)
-→ query both derived datasets `{sync: false}` → write sheets → create bindings.
+Execution is E8.5's `ReportView`: `POST /api/data/query {sync: true}` per panel (sync
+progress via the notifications SSE), pivot in `execute.ts`, render tables + charts. No
+new UI code — this task only ships and validates the seed.
 **Acceptance (manual, real org):** pick one closed month; download GitHub's own
-premium-request usage CSV for it; the report's per-model and per-user totals match
-to the cent (document any rounding delta and its cause in the task's commit message).
-**Done when** template creates and renders; numbers validated once against the CSV.
-**Refs** T7.3, T8.x, T9.1.
+premium-request usage CSV for it; the report's per-model and per-user totals match to the
+cent (document any rounding delta and its cause in the task's commit message).
+**Done when** the seed loads on init, the report renders through `ReportView`, and numbers
+validate once against the CSV.
+**Refs** T8.5.1 (validate/compile), T8.5.2 (seed-on-init), T8.5.4 (ReportView), T9.1.
 
 ---
 
