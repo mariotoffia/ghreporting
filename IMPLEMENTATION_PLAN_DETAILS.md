@@ -1664,6 +1664,205 @@ and charts update; no full-page reload.
 
 ---
 
+## E8.6 Query datasets
+
+Datasets become **data, not code**. A **Query Dataset** is a stored, self-contained SQL
+`SELECT` that the `data` uService executes as a read-only, never-syncing dataset over
+facts already synced by the built-in connectors. A SQL-literate user authors one in the
+browser; it appears in the catalog beside built-ins, so a report panel can point at it
+with **no change to the report designer or ReportView**. This finishes ADR 0014 ("reports
+as data") one layer down.
+
+**Trust model (why arbitrary SELECT is safe here):** single-user local-first app — the
+user already owns `~/.ghreporting/ghreporting.db` and can open it in `sqlite3`, so read
+SQL is not a privilege escalation; secrets are never in SQLite (`credentials_meta` holds
+only metadata; tokens live in Keychain / encrypted-file via `SecretStore`). The one real
+risk — writes/DDL corrupting the app's own tables — is closed at the **driver level**: all
+user SQL runs on a second `Database(dbPath, { readonly: true })` handle, which throws on
+any write/DDL. No SQL blacklist. WAL is already on (ADR 0003), so the read-only handle
+reads cleanly while syncs write on the read-write handle.
+
+**Refs for the whole epic** ADR 0015, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
+PLUGIN.md, ARCHITECTURE.md §4–5, T9.1 (derived-dataset pattern this mirrors).
+
+**Non-goals (YAGNI — each its own future task):** real `CREATE VIEW`/`DROP VIEW` DDL (we
+store the SELECT as a row, never mutate the schema); a no-code/visual aggregation builder
+(no maintained OSS React lib builds a full SELECT/GROUP BY — react-querybuilder et al.
+build only `WHERE`); `filter`-map binding for query datasets (v1 binds `org` + range only,
+which covers the Copilot seed); writes/DDL through this surface (impossible by
+construction).
+
+### T8.6.1 Query datasets migration and read-only handle
+
+**Goal** The `query_datasets` table and a read-only DB handle the data service runs user
+SQL on.
+**Files** create `apps/server/src/adapters/db/migrations/0006_query_datasets.ts` (+ index
+entry); open a read-only handle in the composition root and thread it into the data
+service (`apps/server/src/app.ts`); extend `createDataService` opts and `openDatabase`'s
+neighbour with a `openReadOnly(path)` helper in `adapters/db/database.ts`.
+
+Migration `0006_query_datasets.ts` (0001–0005 are taken: init, workspaces, copilot_seats,
+reports, spend_views):
+
+```sql
+CREATE TABLE query_datasets (
+  id          TEXT PRIMARY KEY,   -- kebab-case, user-supplied
+  title       TEXT NOT NULL,
+  description TEXT,
+  sql         TEXT NOT NULL,      -- one SELECT; uses :org, :from, :to named params
+  columns     TEXT NOT NULL,      -- cached derived ColumnMeta[] as JSON (T8.6.2)
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+```
+
+**Produces**
+- `openReadOnly(path: string): Database` in `adapters/db/database.ts` —
+  `new Database(path, { readonly: true })`; `:memory:` has no second handle, so callers
+  pass their own in tests (see T8.6.2/T8.6.3).
+- `createDataService` gains `roDb?: Database` in its opts (test seam). `app.ts` opens
+  `openReadOnly(config.dbPath)` after `openDatabase` and passes it as `roDb`; closes it in
+  the shutdown path alongside `ctx.db.close()`.
+**Tests** migration creates the table with the stated columns (in-memory DB + run
+migrations, per TESTS.md); `openReadOnly` on a temp file rejects a write
+(`INSERT`/`CREATE`) with a thrown error, proving the guard.
+**Done when** green; migration index lists 0006; `app.ts` opens and closes the read-only
+handle; `wc -l` on every touched file ≤ 500.
+**Refs** T2.1 migration runner, ARCHITECTURE.md §5, ADR 0003 (WAL).
+
+### T8.6.2 Generic connector and resolver
+
+**Goal** One connector kind that backs every query-dataset row, column derivation, and the
+resolver/catalog changes that make user datasets first-class.
+**Files** create `apps/server/src/services/data/query-dataset.ts` (connector factory +
+`deriveColumns` + row types; test beside); edit `services/data/service.ts` (resolver
+fallback + catalog merge). Keep `service.ts` ≤ 500 — move the query-dataset logic into the
+new file and import it.
+**Produces**
+
+```ts
+export interface QueryDatasetRow {
+  id: string; title: string; description: string | null;
+  sql: string; columns: string; // JSON ColumnMeta[]
+  created_at: string; updated_at: string;
+}
+// Derive the result schema by preparing on the READ-ONLY handle (validates syntax AND
+// rejects writes/DDL), then reading column names at LIMIT 0 and inferring types from a
+// LIMIT 1 sample. Throws ValidationError (carrying the SQLite message) on bad/writing SQL.
+export function deriveColumns(roDb: Database, sql: string): ColumnMeta[];
+// Wrap a stored row as a DatasetConnector. coverage()→[] (never syncs); fetch()/upsert()
+// throw AppError("dataset.readonly"); select() runs `SELECT * FROM (<sql>) LIMIT ?` on
+// roDb with bound {org, from, to} and q.limit, mapping rows in declared column order.
+export function queryDatasetConnector(row: QueryDatasetRow, roDb: Database): DatasetConnector;
+```
+
+`deriveColumns`: prepare the statement on `roDb` (a write/DDL statement throws — wrap as
+`ValidationError`); run `SELECT * FROM ( <sql> ) LIMIT 0` bound with probe params
+(`:org="", :from="1970-01-01", :to="1970-01-01"`) and read `stmt.columnNames`; run once at
+`LIMIT 1` and infer each `type` from the sample value — `number`→`"number"`,
+`/^\d{4}-\d{2}-\d{2}/`-shaped string→`"date"`, else `"string"`; `description` defaults to
+`""`.
+`// ponytail: sample-based type inference; refine to per-column typing if a chart mistypes.`
+`select()` ignores the passed read-write `db` and always uses `roDb`; binds
+`{ org: q.org, from: q.range.from, to: q.range.to }`; `q.limit` (already clamped to 1000 by
+`parseQuery`) is the `LIMIT`.
+
+Resolver change in `service.ts`: `connector(id)` (currently throws `NotFoundError` on a
+built-in miss) falls back to a `query_datasets` lookup by id and returns
+`queryDatasetConnector(row, roDb)` when present — so a dataset created a moment ago is
+queryable with **no re-init**. The `/api/data/datasets` handler merges built-in connectors
+with the `query_datasets` rows (each row's `coverage` is `[]`). Built-ins always win a
+name clash (enforced at create time in T8.6.3).
+**Tests** `deriveColumns` derives names/types from a SELECT, and rejects `DELETE FROM
+usage_facts`, `DROP TABLE x`, and malformed SQL with `ValidationError`; the connector's
+`coverage()` is `[]`, `select()` binds org/from/to + clamps LIMIT + returns rows in
+declared order, `fetch`/`upsert` throw; resolver returns a query dataset after its row is
+inserted (no re-init) and `/datasets` includes it. Use a shared read-only handle over the
+test DB so the write-rejection path is exercised.
+**Done when** green; `service.ts` and `query-dataset.ts` each ≤ 500.
+**Refs** T8.6.1, T9.1 (coverage()→[] pattern), ports.ts `DatasetConnector`/`ColumnMeta`.
+
+### T8.6.3 Query datasets routes
+
+**Goal** CRUD and preview for query datasets, under the `data` service.
+**Files** edit `services/data/service.ts` `routes()` (or a small `routes-query-datasets.ts`
+imported by it, to stay ≤ 500); tests beside. Reuse the shared write-guards
+(`jsonObject`, `nonEmpty`, byte-size cap) lifted into `kernel/http.ts` by T8.5.2.
+**Produces** routes under `/api/data` (ids user-supplied kebab-case, time from
+`ctx.config.now()`):
+- `GET /query-datasets` → `[{id, title, description, updated_at}]` (no `sql`/`columns`).
+- `POST /query-datasets {id, title, description?, sql}` → reject an `id` colliding with a
+  built-in connector id or an existing row (`AppError` 409); `deriveColumns(roDb, sql)`
+  (400 on bad/writing SQL); insert with cached `columns` JSON.
+- `GET /query-datasets/:id` → full row incl. `sql` and parsed `columns`.
+- `PUT /query-datasets/:id {title?, description?, sql?}` → when `sql` present, re-derive
+  columns; validate-all-before-write (no half-applied update).
+- `DELETE /query-datasets/:id`.
+- `POST /query-datasets/preview {sql, org?, range?}` → `deriveColumns` + run the SQL on
+  `roDb` with the given (or probe) params, return `{columns, rows}` (LIMIT-clamped to
+  1000). Powers the editor Preview.
+
+`sql` size cap 64 KiB (`ValidationError` past it). Follow the workspace/reports TOCTOU
+discipline: read the body (the only `await`) first, then existence-check + write with no
+yield between.
+**Tests** CRUD round-trips; `GET` list omits `sql`/`columns`; `POST` with writing SQL →
+400; `POST` with an id equal to a built-in (`premium-requests`) → 409; `PUT` partial
+update leaves other fields intact; `/preview` returns columns+rows; a created query
+dataset is answerable via `POST /api/data/query {dataset, q}` immediately and appears in
+`GET /api/data/datasets`. In-memory DB + a read-only handle over it in `beforeEach`.
+**Done when** green; touched files ≤ 500.
+**Refs** T8.6.2, T8.5.2 (route shape + shared guards to mirror), TESTS.md.
+
+### T8.6.4 Query datasets UI
+
+**Goal** List, create, edit, delete, and preview query datasets in the browser with a real
+SQL editor.
+**Library** `@uiw/react-codemirror` + `@codemirror/lang-sql` (CodeMirror 6 — ~300 KB,
+Vite-friendly, schema-aware SQL autocomplete). **Verify it declares a React 19 peer before
+adding** (climb-the-ladder gate); if it lags React 19, ship v1 with a plain `<textarea>`
+and add the editor when the peer lands — record the choice in the commit.
+**Files** create `apps/web/src/features/query-datasets/api.ts` (typed client over
+`/api/data/query-datasets`, using `lib/api.ts`), `query-datasets/Editor.tsx` (list +
+editor), a "Query datasets" entry in the shell nav; tests `api.test.ts` and an
+`Editor.test.tsx` smoke.
+**Produces** a list view (title, description, updated_at; actions open/edit/delete); an
+editor with the CodeMirror SQL field (feed `sql()`'s `schema` option the fact-table
+columns from `GET /api/data/datasets` so the user gets `usage_facts.net_amount_usd`
+autocomplete), a **Preview** button (`POST /query-datasets/preview` → render derived
+columns + sample rows reusing `explorer/Preview` + `explorer/format`), and Save
+(`POST`/`PUT`). Server state via TanStack Query; validation errors surface inline. The
+existing report-designer dataset picker (fed by `/api/data/datasets`) lists query datasets
+automatically — **no report-designer change**.
+**Tests** `api` client round-trips against a mocked endpoint; Editor smoke: list renders
+from mocked api, delete calls the endpoint and invalidates the query, Preview calls
+`/preview`.
+**Done when** manual: create a query dataset with a `GROUP BY` SELECT, Preview shows the
+right columns, Save + reload persists it, and it appears in the report designer's dataset
+picker. Green.
+**Refs** T8.6.3, T6.1 api client, T6.4 Preview/format, ARCHITECTURE.md §7.
+
+### T8.6.5 Query datasets docs
+
+**Goal** Record the decision and vocabulary so future work doesn't diverge.
+**Files** create `docs/adr/0015-query-datasets-stored-selects.md` (+ index entry in
+`docs/adr/README.md`); edit `UBIQUITOUS.md`, `PLUGIN.md`, `ARCHITECTURE.md`.
+**Produces**
+- **ADR 0015** — context: ADR 0014 made reports data but datasets stayed code; decision:
+  user-defined aggregations as read-only stored SELECTs on a read-only handle, resolver
+  fallback, columns auto-derived; rejected: real `CREATE VIEW` DDL, visual builder,
+  server-side execution changes. References ADR 0014, 0003.
+- **UBIQUITOUS.md** — add **Query Dataset** (a user-authored, read-only dataset defined by
+  a stored SELECT over synced facts). No synonyms.
+- **PLUGIN.md** — note the generic query-dataset connector as a connector kind whose
+  `coverage()` is always empty (never syncs).
+- **ARCHITECTURE.md §4/§5** — one paragraph on the read-only handle + resolver fallback.
+**Tests** none (docs); `make lint` still green (markdown/line-length ≤ 600).
+**Done when** ADR 0015 accepted and linked; the three docs mention Query Datasets; all
+docs ≤ 600 lines.
+**Refs** ADR 0014, docs/adr/README.md.
+
+---
+
 ## E9 First report
 
 ### T9.1 Spend aggregation views

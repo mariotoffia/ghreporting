@@ -135,6 +135,22 @@ export/import; list/edit/delete. See [ADR 0014](docs/adr/0014-report-designer-st
 | T8.5.3 | Web: report designer (list/create/edit/delete, import/export) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t853-report-designer-ui) | T8.5.2, T6.1 | ⬜ |
 | T8.5.4 | Web: ReportView execution (compile → query → table/chart, param re-run) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t854-reportview-execution) | T8.5.1, T8.1, T2.5d | ⬜ |
 
+### E8.6 — Query datasets (`data` uService)
+
+Datasets as **data, not code**: a SQL-literate user defines a new aggregation as a stored
+read-only `SELECT` over already-synced facts — no migration, no deploy. Executed on a
+read-only DB handle (writes/DDL impossible by construction), surfaced in the catalog
+beside built-ins, so the report designer needs zero changes. Finishes ADR 0014 one layer
+down; see [ADR 0015](docs/adr/0015-query-datasets-stored-selects.md).
+
+| ID | Task | Details | Depends | Status |
+|----|------|---------|---------|--------|
+| T8.6.1 | Migration `0006_query_datasets` + read-only DB handle wiring | [details](IMPLEMENTATION_PLAN_DETAILS.md#t861-query-datasets-migration-and-read-only-handle) | T2.2 | ⬜ |
+| T8.6.2 | Generic query-dataset connector, `deriveColumns`, resolver fallback, catalog merge | [details](IMPLEMENTATION_PLAN_DETAILS.md#t862-generic-connector-and-resolver) | T8.6.1, T2.5d | ⬜ |
+| T8.6.3 | `data` routes: `/query-datasets` CRUD + `/preview` | [details](IMPLEMENTATION_PLAN_DETAILS.md#t863-query-datasets-routes) | T8.6.2 | ⬜ |
+| T8.6.4 | Web: query-datasets screen (CodeMirror SQL editor, preview, nav) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t864-query-datasets-ui) | T8.6.3, T6.1 | ⬜ |
+| T8.6.5 | ADR 0015 + UBIQUITOUS/PLUGIN/ARCHITECTURE updates | [details](IMPLEMENTATION_PLAN_DETAILS.md#t865-query-datasets-docs) | T8.6.1 | ⬜ |
+
 ### E9 — First report: Copilot model spend
 
 | ID | Task | Details | Depends | Status |
@@ -160,12 +176,17 @@ export/import; list/edit/delete. See [ADR 0014](docs/adr/0014-report-designer-st
 ## Suggested order
 
 T1.1→T1.5 · T2.1→T2.2 · T5.1 · T3.1→T3.4 · T2.3→T2.4 · T4.1→T4.2 · T5.2 ·
-T2.5a→e · T2.6 · T6.1→T6.4 · T7.1→T7.3 · T8.1→T8.2 · T8.5.1→T8.5.4 · T9.1→T9.2 ·
-T11.1→T11.3 · T10.1→T10.2 · (T7.4 whenever).
+T2.5a→e · T2.6 · T6.1→T6.4 · T7.1→T7.3 · T8.1→T8.2 · T8.5.1→T8.5.4 · T8.6.1→T8.6.5 ·
+T9.1→T9.2 · T11.1→T11.3 · T10.1→T10.2 · (T7.4 whenever).
 
 E8.5 depends only on T8.1 (ChartHost) + the premium-requests datasets — not on the
 Univer sheet path (E7) or the bidirectional link (T8.2): report panels render as HTML
 tables, not sheets.
+
+E8.6 is optional relative to E9: E9 ships the same spend aggregations as SQL views in a
+migration (T9.1), which always work. E8.6 makes *new* aggregations authorable from the
+browser without a deploy — E9's numbers can later be re-expressed as query datasets, but
+E9 does not depend on E8.6.
 
 The one intentional cycle-breaker: T2.3 (GitHub client) needs a token from the
 credentials service (T3.4); until T3.4 lands, T2.3's tests inject a fake token
