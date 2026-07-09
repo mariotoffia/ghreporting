@@ -1,6 +1,6 @@
 // The ONLY module allowed to import Univer (ADR 0008): an anti-corruption layer so a
 // Univer version bump is contained to this file plus SheetHost. Everything else in the
-// app speaks the binding store and these four thin wrappers, never `univerAPI` directly.
+// app speaks the binding store and these thin wrappers, never `univerAPI` directly.
 //
 // Facade names verified against @univerjs/presets 0.25.1 (the pinned minor). The sheet
 // API has moved between minors — re-verify every symbol here on any upgrade, with the
@@ -15,6 +15,7 @@ import {
 import { UniverSheetsCorePreset } from "@univerjs/presets/preset-sheets-core";
 import sheetsCoreEnUS from "@univerjs/presets/preset-sheets-core/locales/en-US";
 import { rangeFromAnchor } from "./a1";
+import { ghdataResult } from "./ghdata";
 
 export type { FUniver, IWorkbookData };
 
@@ -56,6 +57,51 @@ export function writeRange(api: FUniver, sheet: string, a1: string, matrix: unkn
 export function readRange(api: FUniver, sheet: string, a1: string): unknown[][] {
   const ws = api.getActiveWorkbook()?.getSheetByName(sheet);
   return ws ? ws.getRange(a1).getValues() : [];
+}
+
+/**
+ * Select (visually highlight) `sheet!a1` in the live workbook — the chart→sheet feedback
+ * (T8.2). A no-op if the sheet is gone. `activate()` moves the active selection; it does
+ * not mutate cell values, so it never triggers onValueMutation (no revision bump, no loop).
+ */
+export function highlightRange(api: FUniver, sheet: string, a1: string): void {
+  api.getActiveWorkbook()?.getSheetByName(sheet)?.getRange(a1).activate();
+}
+
+/** Unwrap a Univer formula argument (a value-object with `getValue`, or a raw primitive). */
+function argScalar(v: unknown): unknown {
+  if (v && typeof v === "object" && "getValue" in v) {
+    const getValue = (v as { getValue?: unknown }).getValue;
+    if (typeof getValue === "function") return (v as { getValue(): unknown }).getValue();
+  }
+  return v;
+}
+
+// The custom-function type, derived from the pinned facade so we don't import
+// @univerjs/engine-formula (outside the presets ACL). Univer's formula value types are
+// wider than our scalar view; we assert across them once, at the registration seam below.
+type GhFn = Parameters<FUniver["registerFunction"]>[0]["calculate"][number][0];
+
+/**
+ * Register the GHDATA(dataset, org, from, to) custom formula (T7.4). It spills whatever
+ * matrix `lookup` returns for those args — synchronous, cache-only, never the network. The
+ * one Univer seam for custom-formula registration (ADR 0008). Returns a disposer.
+ */
+export function registerGhData(
+  api: FUniver,
+  lookup: (key: string) => unknown[][] | undefined,
+): { dispose(): void } {
+  const func = (...args: unknown[]): unknown[][] | string =>
+    ghdataResult(lookup, args.map(argScalar));
+  return api.registerFunction({
+    calculate: [
+      [
+        func as unknown as GhFn,
+        "GHDATA",
+        "Spill a cached dataset: =GHDATA(dataset, org, from, to)",
+      ],
+    ],
+  });
 }
 
 /** The current workbook snapshot, persisted by the workspace service. */

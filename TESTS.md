@@ -67,6 +67,10 @@ Live-test etiquette (MUST):
   helpers that themselves need tests.
 - SQLite in unit tests is allowed (in-memory) — it *is* our stdlib storage; faking SQL
   with maps tests the fake.
+- React components: render with `renderToString` (no DOM) by default. Only when a test
+  must run **effects** (e.g. spying on a chart repaint) register `@happy-dom/global-registrator`
+  per-file and `unregister()` in `afterAll`, so it never leaks a `document` into the SSR
+  suites (ADR 0015). Prefer extracting pure logic and testing that DOM-free.
 - Forbidden: network, real keychain, real timers, `~/.ghreporting`, ordering
   dependencies between `it`s.
 - The macOS Keychain backend is exercised by a **manually run** conformance test

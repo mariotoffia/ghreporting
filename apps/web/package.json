@@ -12,11 +12,13 @@
     "@simplewebauthn/browser": "^13.3.0",
     "@tanstack/react-query": "^5.101.2",
     "@univerjs/presets": "~0.25.1",
+    "echarts": "^6.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.10.6",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.6.0",

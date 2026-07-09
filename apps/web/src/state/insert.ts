@@ -57,6 +57,8 @@ export async function insertIntoSheet(deps: InsertDeps, params: InsertParams): P
   const rs = await deps.query(params.dataset, params.query);
   const matrix = resultToMatrix(rs);
   deps.write(params.sheet, params.anchor, matrix); // header row written first
+  // Cache the result so =GHDATA(dataset, org, from, to) can spill the same data (T7.4).
+  useBindings.getState().cacheResult(params.dataset, params.query, matrix);
   const range = rangeFromAnchor(params.anchor, matrix.length, rs.columns.length);
   const binding = await deps.saveBinding(params.workbookId, {
     sheet: params.sheet,

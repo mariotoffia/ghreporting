@@ -18,7 +18,9 @@ function binding(p: Partial<Binding> & Pick<Binding, "id" | "sheet" | "range">):
   };
 }
 
-beforeEach(() => useBindings.setState({ bindings: [], revisions: {}, selection: null }));
+beforeEach(() =>
+  useBindings.setState({ bindings: [], revisions: {}, selection: null, results: {} }),
+);
 afterEach(() => get.mockClear());
 
 describe("binding store — transitions", () => {
@@ -32,6 +34,54 @@ describe("binding store — transitions", () => {
   it("add appends a binding", () => {
     useBindings.getState().add(binding({ id: "b1", sheet: "Sheet1", range: "A1:B2" }));
     expect(useBindings.getState().bindings.map((b) => b.id)).toEqual(["b1"]);
+  });
+
+  it("replaceBinding swaps one binding in place and leaves revisions/selection untouched", () => {
+    useBindings.setState({
+      bindings: [
+        binding({ id: "b1", sheet: "Sheet1", range: "A1:B2" }),
+        binding({ id: "b2", sheet: "Sheet1", range: "D1:E2" }),
+      ],
+      revisions: { b1: 3, b2: 1 },
+      selection: { bindingId: "b1", rows: [0] },
+    });
+    const revsBefore = useBindings.getState().revisions;
+    const selBefore = useBindings.getState().selection;
+    useBindings.getState().replaceBinding(
+      binding({
+        id: "b2",
+        sheet: "Sheet1",
+        range: "D1:E2",
+        chartSpec: {
+          type: "bar",
+          xColumn: "day",
+          seriesColumns: ["requests"],
+        },
+      }),
+    );
+    const s = useBindings.getState();
+    expect(s.bindings.find((b) => b.id === "b2")?.chartSpec).toBeDefined();
+    expect(s.bindings.find((b) => b.id === "b1")?.chartSpec).toBeUndefined();
+    // A single spec change must NOT reset every chart's revision or the active selection.
+    expect(s.revisions).toBe(revsBefore);
+    expect(s.selection).toBe(selBefore);
+  });
+
+  it("cacheResult stores a query result under its (dataset, org, from, to) key", () => {
+    const matrix = [
+      ["day", "requests"],
+      ["2026-07-01", 12],
+    ];
+    useBindings
+      .getState()
+      .cacheResult(
+        "premium-requests",
+        { org: "acme", range: { from: "2026-01-01", to: "2026-06-30" } },
+        matrix,
+      );
+    // GHDATA reads it back by the same key (resultKey lives in features/sheets/ghdata).
+    const s = useBindings.getState();
+    expect(s.results["premium-requests|acme|2026-01-01|2026-06-30"]).toEqual(matrix);
   });
 
   it("bumpRevision increments from undefined→1→2 for that binding only", () => {

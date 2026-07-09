@@ -113,14 +113,14 @@ Status: ✅ done · ⬜ open · (opt) optional.
 | T7.1 | Workspace uService (workbooks, bindings) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t71-workspace-uservice) | T2.2 | ✅ |
 | T7.2 | SheetHost (Univer embed, snapshots) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t72-sheethost-univer-embed) | T6.1, T7.1 | ✅ |
 | T7.3 | Binding store and insert-into-sheet flow | [details](IMPLEMENTATION_PLAN_DETAILS.md#t73-binding-store-and-insert-flow) | T7.2, T6.4 | ✅ |
-| T7.4 | Custom GHDATA() sheet formula | [details](IMPLEMENTATION_PLAN_DETAILS.md#t74-ghdata-formula) | T7.3 | ⬜ (opt) |
+| T7.4 | Custom GHDATA() sheet formula | [details](IMPLEMENTATION_PLAN_DETAILS.md#t74-ghdata-formula) | T7.3 | ✅ (opt) |
 
 ### E8 — Charts
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T8.1 | ChartHost (ECharts wrapper, chart specs) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t81-charthost) | T7.3 | ⬜ |
-| T8.2 | Bidirectional sheet⇄chart link | [details](IMPLEMENTATION_PLAN_DETAILS.md#t82-bidirectional-sheet-chart-link) | T8.1 | ⬜ |
+| T8.1 | ChartHost (ECharts wrapper, chart specs) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t81-charthost) | T7.3 | ✅ |
+| T8.2 | Bidirectional sheet⇄chart link | [details](IMPLEMENTATION_PLAN_DETAILS.md#t82-bidirectional-sheet-chart-link) | T8.1 | ✅ |
 
 ### E8.5 — Report designer (`reports` uService)
 

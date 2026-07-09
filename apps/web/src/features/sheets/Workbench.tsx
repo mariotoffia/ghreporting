@@ -3,13 +3,15 @@
 // the binding store (sheet→chart revision bumps), and (3) completes a pending "insert
 // into sheet" hand-off from the explorer, once the sheet facade is ready (T7.3).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../../lib/client";
-import { type Binding, useBindings } from "../../state/bindings";
+import { type Binding, type ChartSpec, useBindings } from "../../state/bindings";
 import { type InsertResultSet, insertIntoSheet, nextAnchor } from "../../state/insert";
 import { useUi } from "../../state/ui";
+import { BoundChart } from "../charts/BoundChart";
+import { deriveChartSpec } from "../charts/spec";
 import { SheetHost } from "./SheetHost";
-import { type FUniver, type IWorkbookData, writeRange } from "./univer";
+import { type FUniver, type IWorkbookData, readRange, writeRange } from "./univer";
 
 interface WorkbookSummary {
   id: string;
@@ -33,11 +35,54 @@ function ActiveWorkbook({ id }: { id: string }) {
   const [insertError, setInsertError] = useState<string | null>(null);
   const pending = useUi((s) => s.pendingInsert);
   const clearInsert = useUi((s) => s.clearInsert);
+  const bindings = useBindings((s) => s.bindings);
 
   // Populate the binding store so onSheetEdit can intersect against this workbook's bindings.
   useEffect(() => {
     void useBindings.getState().load(id);
   }, [id]);
+
+  // Read a binding's live range from the sheet — memoized on the facade so BoundChart
+  // re-reads once the sheet finishes booting (facade goes null → live).
+  const read = useCallback(
+    (sheet: string, range: string): unknown[][] =>
+      sheetApi ? readRange(sheetApi, sheet, range) : [],
+    [sheetApi],
+  );
+
+  // Persist a chart spec change/removal and swap just that one binding in the store, so a
+  // single chart edit doesn't reset revisions/selection (and repaint every other chart) —
+  // which a full `load()` would. The PUT returns the updated binding with its new chartSpec.
+  // ponytail: PUTs aren't serialized, so hammering the type dropdown is last-write-wins on
+  // the response; self-heals on reload. Serialize per binding if it ever matters.
+  const persistSpec = useCallback(
+    async (binding: Binding, next: ChartSpec | null): Promise<void> => {
+      setInsertError(null);
+      try {
+        const updated = await api.put<Binding>(`/api/workspace/bindings/${binding.id}`, {
+          chartSpec: next,
+        });
+        useBindings.getState().replaceBinding(updated);
+      } catch (err) {
+        setInsertError(err instanceof Error ? err.message : "Chart update failed.");
+      }
+    },
+    [],
+  );
+
+  // Seed a default chart from the bound range's current shape (T8.1 done-when: a binding
+  // with a chartSpec renders). Needs ≥2 columns to relate one against another.
+  const addChart = useCallback(
+    (binding: Binding): void => {
+      const spec = deriveChartSpec(read(binding.sheet, binding.range));
+      if (!spec) {
+        setInsertError("Not enough columns to chart this range.");
+        return;
+      }
+      void persistSpec(binding, spec);
+    },
+    [read, persistSpec],
+  );
 
   // Complete a pending insert once the sheet facade exists. Consume the intent first so
   // a query refetch (which changes wb.data identity) can never double-insert.
@@ -84,6 +129,29 @@ function ActiveWorkbook({ id }: { id: string }) {
         onReady={setSheetApi}
         onEdit={(sheet, a1) => useBindings.getState().onSheetEdit(sheet, a1)}
       />
+      {bindings.length > 0 && (
+        <section className="charts">
+          {bindings.map((b) =>
+            b.chartSpec ? (
+              <BoundChart
+                key={b.id}
+                binding={b}
+                read={read}
+                onSpecChange={(next) => void persistSpec(b, next)}
+              />
+            ) : (
+              <div key={b.id} className="chart-add">
+                <span className="muted">
+                  {b.dataset} — {b.range}
+                </span>
+                <button type="button" onClick={() => addChart(b)}>
+                  Add chart
+                </button>
+              </div>
+            ),
+          )}
+        </section>
+      )}
     </>
   );
 }
