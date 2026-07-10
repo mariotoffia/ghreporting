@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import type { DatasetQuery } from "./bindings"; // type-only: no runtime import cycle
 
-export type View = "login" | "explorer" | "workbench";
+export type View = "login" | "explorer" | "workbench" | "reports" | "query-datasets";
 
 /** A dataset the explorer asked to drop into the active workbook. */
 export interface PendingInsert {

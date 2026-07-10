@@ -34,6 +34,7 @@ bounded context ([DDD.md](DDD.md)).
 | **Org Member** | A user belonging to the org (`org_members` set), independent of any team. |
 | **Seat** | A current Copilot seat assignment per (org, user) — state, not a Usage Fact. |
 | **Report download** | Fetching a usage-metrics report's signed URL without auth headers (`GitHubClient.download`, ADR 0012). |
+| **Query Dataset** | A user-authored, read-only Dataset defined by a stored SQL `SELECT` over already-synced facts (ADR 0016). Never syncs (coverage is always empty); runs on the read-only handle. Listed in the Catalog beside built-in Datasets. Not a "view", "custom query", or "saved query". |
 
 ## Workspace (`workspace` uService, `sheets`/`charts` features)
 

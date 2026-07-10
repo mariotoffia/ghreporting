@@ -10,6 +10,7 @@
 // `toBinding` / the INSERT — one translation seam, nowhere else.
 import type { Hono } from "hono";
 import { NotFoundError, ValidationError } from "../../kernel/errors";
+import { capBytes, jsonObject, nonEmpty } from "../../kernel/http";
 import type { MicroService, ServiceContext } from "../../kernel/ports";
 
 // Univer snapshots are large; cap what we persist so one runaway document can't
@@ -41,12 +42,6 @@ function toBinding(r: BindingRow) {
   };
 }
 
-/** Reject a missing/blank string field the same way everywhere. */
-function nonEmpty(v: unknown, field: string): string {
-  if (typeof v !== "string" || v.trim() === "") throw new ValidationError(`${field} is required`);
-  return v;
-}
-
 /**
  * Stringify a snapshot and enforce the size cap. `undefined` means "no snapshot" →
  * defaults to "{}". `null` / a non-object is malformed and — on PUT — would silently
@@ -56,11 +51,7 @@ function serializeSnapshot(snapshot: unknown): string {
   if (snapshot !== undefined && (snapshot === null || typeof snapshot !== "object")) {
     throw new ValidationError("snapshot must be an object");
   }
-  const s = JSON.stringify(snapshot ?? {});
-  if (Buffer.byteLength(s, "utf8") > MAX_SNAPSHOT_BYTES) {
-    throw new ValidationError("snapshot exceeds the 20 MB limit");
-  }
-  return s;
+  return capBytes(JSON.stringify(snapshot ?? {}), MAX_SNAPSHOT_BYTES, "snapshot");
 }
 
 /** Serialize a query/chartSpec into their TEXT columns from a (partial) body. */
@@ -68,21 +59,6 @@ function serializeQuery(query: unknown): string {
   if (query == null || typeof query !== "object")
     throw new ValidationError("query must be an object");
   return JSON.stringify(query);
-}
-
-/**
- * Parse a request body as a JSON object. `c.req.json()` accepts a bare `null`, a JSON
- * array, or a primitive without rejecting — reading `.name`/`.sheet` off those would
- * throw a raw TypeError (a 500). Normalize to a 400 here so every write route is safe.
- */
-async function jsonObject(req: { json(): Promise<unknown> }): Promise<Record<string, unknown>> {
-  const parsed = await req.json().catch(() => {
-    throw new ValidationError("body must be JSON");
-  });
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new ValidationError("body must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
 }
 
 export function createWorkspaceService(): MicroService {

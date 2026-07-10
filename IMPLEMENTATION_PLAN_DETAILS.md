@@ -1682,7 +1682,7 @@ user SQL runs on a second `Database(dbPath, { readonly: true })` handle, which t
 any write/DDL. No SQL blacklist. WAL is already on (ADR 0003), so the read-only handle
 reads cleanly while syncs write on the read-write handle.
 
-**Refs for the whole epic** ADR 0015, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
+**Refs for the whole epic** ADR 0016, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
 PLUGIN.md, ARCHITECTURE.md §4–5, T9.1 (derived-dataset pattern this mirrors).
 
 **Non-goals (YAGNI — each its own future task):** real `CREATE VIEW`/`DROP VIEW` DDL (we
@@ -1844,10 +1844,10 @@ picker. Green.
 ### T8.6.5 Query datasets docs
 
 **Goal** Record the decision and vocabulary so future work doesn't diverge.
-**Files** create `docs/adr/0015-query-datasets-stored-selects.md` (+ index entry in
+**Files** create `docs/adr/0016-query-datasets-stored-selects.md` (+ index entry in
 `docs/adr/README.md`); edit `UBIQUITOUS.md`, `PLUGIN.md`, `ARCHITECTURE.md`.
 **Produces**
-- **ADR 0015** — context: ADR 0014 made reports data but datasets stayed code; decision:
+- **ADR 0016** — context: ADR 0014 made reports data but datasets stayed code; decision:
   user-defined aggregations as read-only stored SELECTs on a read-only handle, resolver
   fallback, columns auto-derived; rejected: real `CREATE VIEW` DDL, visual builder,
   server-side execution changes. References ADR 0014, 0003.
@@ -1857,7 +1857,7 @@ picker. Green.
   `coverage()` is always empty (never syncs).
 - **ARCHITECTURE.md §4/§5** — one paragraph on the read-only handle + resolver fallback.
 **Tests** none (docs); `make lint` still green (markdown/line-length ≤ 600).
-**Done when** ADR 0015 accepted and linked; the three docs mention Query Datasets; all
+**Done when** ADR 0016 accepted and linked; the three docs mention Query Datasets; all
 docs ≤ 600 lines.
 **Refs** ADR 0014, docs/adr/README.md.
 

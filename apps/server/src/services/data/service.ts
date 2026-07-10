@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { AppError, NotFoundError, ValidationError } from "../../kernel/errors";
 import type { MicroService, ServiceContext } from "../../kernel/ports";
 import { billingUsageConnector } from "./connectors/billing-usage";
@@ -7,6 +8,8 @@ import { orgPeopleConnector } from "./connectors/org-people";
 import { premiumRequestsConnector } from "./connectors/premium-requests";
 import { addDays } from "./connectors/util";
 import type { DatasetConnector, DatasetQuery, GitHubClient, ResultSet } from "./ports";
+import { type QueryDatasetRow, queryDatasetConnector } from "./query-dataset";
+import { registerQueryDatasetRoutes } from "./routes-query-datasets";
 import { type SchedulerTimers, startScheduler } from "./scheduler";
 import { readSyncState, syncGaps } from "./sync";
 
@@ -37,6 +40,10 @@ export interface DataService extends MicroService {
 export function createDataService(opts: {
   gh: GitHubClient;
   connectors?: DatasetConnector[];
+  /** Read-only handle for user query-dataset SQL (ADR 0016). Undefined ⇒ query datasets
+   *  are inert (resolver falls through to NotFound). Tests over an in-memory DB pass their
+   *  own handle over a shared file (see query-dataset.test.ts). */
+  roDb?: Database;
   /** Test seam: deterministic timers/jitter for the background scheduler. */
   schedulerControls?: { timers?: SchedulerTimers; rand?: () => number };
 }): DataService {
@@ -50,10 +57,23 @@ export function createDataService(opts: {
     connectors.set(c.meta.id, c);
   }
 
+  /** Read a query-dataset row by id from the read-write handle (reading it is safe there). */
+  function queryDatasetRow(id: string): QueryDatasetRow | null {
+    return ctx.db
+      .query("SELECT * FROM query_datasets WHERE id=?")
+      .get(id) as QueryDatasetRow | null;
+  }
+
   function connector(id: string): DatasetConnector {
     const c = connectors.get(id);
-    if (!c) throw new NotFoundError(`dataset ${id}`);
-    return c;
+    if (c) return c; // built-ins always win a name clash (create-time guard enforces it)
+    // Fall back to a stored query dataset (ADR 0016): one created a moment ago is queryable
+    // with no re-init. Needs the read-only handle to run its SQL.
+    if (opts.roDb) {
+      const row = queryDatasetRow(id);
+      if (row) return queryDatasetConnector(row, opts.roDb);
+    }
+    throw new NotFoundError(`dataset ${id}`);
   }
 
   async function queryDataset(
@@ -136,14 +156,45 @@ export function createDataService(opts: {
       // The explorer prefills its org input from the configured scope (GHR_ORG).
       app.get("/config", (c) => c.json({ org: ctx.config.org ?? null }));
 
-      app.get("/datasets", (c) =>
-        c.json(
-          [...connectors.values()].map((con) => ({
-            ...con.meta,
-            coverage: readSyncState(ctx.db, con.meta.id),
-          })),
-        ),
-      );
+      // Table → column names, for the query-dataset SQL editor's schema-aware autocomplete
+      // (ADR 0016). Read-only introspection of the user's own DB; internal bookkeeping tables
+      // are hidden. Uses the read-only handle when present, else the shared handle.
+      app.get("/schema", (c) => {
+        const src = opts.roDb ?? ctx.db;
+        const tables = (
+          src
+            .query(
+              "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','query_datasets') ORDER BY name",
+            )
+            .values() as [string][]
+        ).map((r) => r[0]);
+        const schema: Record<string, string[]> = {};
+        for (const t of tables) {
+          // t comes from sqlite_master (not user input); quote it for names with odd chars.
+          schema[t] = (src.query(`PRAGMA table_info("${t}")`).all() as { name: string }[]).map(
+            (col) => col.name,
+          );
+        }
+        return c.json(schema);
+      });
+
+      app.get("/datasets", (c) => {
+        const builtins = [...connectors.values()].map((con) => ({
+          ...con.meta,
+          coverage: readSyncState(ctx.db, con.meta.id),
+        }));
+        // Query datasets (ADR 0016) sit beside built-ins so the report designer picker lists
+        // them with no change. They never sync, so coverage is always [].
+        const queryDatasets = opts.roDb
+          ? (
+              ctx.db.query("SELECT * FROM query_datasets ORDER BY title").all() as QueryDatasetRow[]
+            ).map((row) => ({
+              ...queryDatasetConnector(row, opts.roDb as Database).meta,
+              coverage: [],
+            }))
+          : [];
+        return c.json([...builtins, ...queryDatasets]);
+      });
 
       app.post("/query", async (c) => {
         const body = (await c.req.json().catch(() => {
@@ -164,6 +215,17 @@ export function createDataService(opts: {
         const { stale } = await syncGaps(connector(body.dataset), q, ctx, opts.gh);
         return c.json({ synced: !stale, stale });
       });
+
+      // Query-dataset CRUD + preview (ADR 0016). Only when a read-only handle exists — under
+      // a `:memory:` config these routes are absent (built-in datasets keep working).
+      if (opts.roDb) {
+        registerQueryDatasetRoutes(app, {
+          db: () => ctx.db,
+          roDb: opts.roDb,
+          isBuiltin: (id) => connectors.has(id),
+          now: () => ctx.config.now(),
+        });
+      }
     },
   };
 }

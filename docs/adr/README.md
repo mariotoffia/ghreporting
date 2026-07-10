@@ -22,6 +22,7 @@ implementation state is tracked in IMPLEMENTATION_PLAN.md, not here.
 | [0013](0013-insert-flow-auto-anchor.md) | Insert-into-sheet uses auto-anchor placement (dialog deferred) | accepted |
 | [0014](0014-report-designer-standalone-definitions.md) | Report designer: standalone, parameterized report definitions | accepted |
 | [0015](0015-charthost-presentational-happy-dom-tests.md) | ChartHost stays presentational; effect-driven chart tests use happy-dom | accepted |
+| [0016](0016-query-datasets-stored-selects.md) | Query datasets: user-defined aggregations as read-only stored SELECTs | accepted |
 
 ## Numbering
 

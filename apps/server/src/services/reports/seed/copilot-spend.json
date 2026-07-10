@@ -1,0 +1,30 @@
+{
+  "name": "Copilot Spend",
+  "description": "GitHub Copilot premium-request spend by model over a date range.",
+  "definition": {
+    "version": 1,
+    "parameters": [
+      { "name": "org", "kind": "org", "default": "" },
+      {
+        "name": "range",
+        "kind": "dateRange",
+        "default": { "from": "2026-01-01", "to": "2026-01-31" }
+      }
+    ],
+    "panels": [
+      {
+        "id": "spend-by-model",
+        "title": "Premium-request spend by model",
+        "dataset": "premium-requests",
+        "query": { "org": "{{org}}", "range": "{{range}}" },
+        "transform": { "pivot": { "x": "day", "series": "model", "value": "net_usd" } },
+        "chartSpec": {
+          "type": "stacked-bar",
+          "xColumn": "day",
+          "seriesColumns": [],
+          "title": "Spend by model (USD)"
+        }
+      }
+    ]
+  }
+}

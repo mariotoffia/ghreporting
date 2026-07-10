@@ -17,6 +17,12 @@ const Explorer = lazy(() =>
 const Workbench = lazy(() =>
   import("./features/sheets/Workbench").then((m) => ({ default: m.Workbench })),
 );
+const Reports = lazy(() =>
+  import("./features/reports/Reports").then((m) => ({ default: m.Reports })),
+);
+const QueryDatasets = lazy(() =>
+  import("./features/query-datasets/Editor").then((m) => ({ default: m.Editor })),
+);
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -26,6 +32,8 @@ const EXPLORER_TAB = { view: "explorer", label: "Explorer", component: Explorer 
 const TABS: { view: Exclude<View, "login">; label: string; component: ComponentType }[] = [
   EXPLORER_TAB,
   { view: "workbench", label: "Workbench", component: Workbench },
+  { view: "reports", label: "Reports", component: Reports },
+  { view: "query-datasets", label: "Query datasets", component: QueryDatasets },
 ];
 
 /** Bridges the single SSE stream to query invalidations for the whole app. */

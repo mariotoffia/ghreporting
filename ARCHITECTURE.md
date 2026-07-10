@@ -214,6 +214,18 @@ Key DDL decisions (full DDL in IMPLEMENTATION_PLAN_DETAILS.md T2.2):
 - `raw` keeps the original API row (JSON) — reports can be rebuilt when GitHub adds
   fields, without re-syncing.
 
+### Read-only handle for query datasets (ADR 0016)
+
+A **Query Dataset** is a user-authored SQL `SELECT` stored as a row in `query_datasets`
+(never `CREATE VIEW`). The `data` service opens a **second `bun:sqlite` handle in
+`{ readonly: true }` mode** (`openReadOnly`) on the same file and runs all user SQL there,
+so a write/DDL throws at the driver — arbitrary read SQL cannot corrupt the app's tables (a
+second guard wraps every statement as `SELECT * FROM ( … )`, making non-SELECTs a syntax
+error). WAL (ADR 0003) lets it read while syncs write on the read-write handle. The dataset
+resolver falls back to a `query_datasets` lookup on a built-in miss — a dataset created a
+moment ago is queryable with no re-init — and `GET /api/data/datasets` merges these rows
+(coverage always `[]`) beside built-ins, so the report designer lists them unchanged.
+
 ## 6. Security Model
 
 Single local user; the goal is that **nothing secret rests in plaintext on disk** and
