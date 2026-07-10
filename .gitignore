@@ -120,3 +120,4 @@ dist
 *.bun-build
 .DS_Store
 .ghreporting/
+.playwright-mcp/
