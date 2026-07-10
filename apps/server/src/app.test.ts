@@ -110,6 +110,22 @@ describe("buildApp", () => {
     }
   });
 
+  it("registers the reports service: /api/reports lists the seeded Copilot Spend report", async () => {
+    // Exercises the REAL kernel mount (/api/reports) + seed-on-init: guards against the
+    // route resolving to /api/reports/reports (a doubled prefix the unit harness can't see).
+    const built = build();
+    ctx = built.ctx;
+    await built.kernel.start(built.app);
+    try {
+      const res = await built.app.request("/api/reports", authed(built));
+      expect(res.status).toBe(200);
+      const list = (await res.json()) as Array<{ id: string; name: string }>;
+      expect(list.some((r) => r.id === "copilot-spend")).toBe(true);
+    } finally {
+      await built.kernel.stop();
+    }
+  });
+
   it("returns a 404 envelope for unknown routes (behind the gate)", async () => {
     const built = build();
     ctx = built.ctx;

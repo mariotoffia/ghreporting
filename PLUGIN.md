@@ -82,6 +82,15 @@ Rules:
    coverage→fetch→upsert→select round-trips, idempotent double-upsert, and that
    `select` matches `meta.columns`.
 
+### Non-syncing connectors (query datasets, derived datasets)
+
+Not every connector fetches from GitHub. A **query dataset** (ADR 0016) is one generic
+connector kind (`services/data/query-dataset.ts`) whose `coverage()` is **always `[]`** —
+it never syncs, because it reads facts other connectors already landed. `fetch`/`upsert`
+throw (`dataset.readonly`); `select` runs the stored user SQL on the read-only handle. One
+factory (`queryDatasetConnector`) backs every `query_datasets` row, so there is no per-row
+module. Derived spend datasets (T9.1) follow the same empty-coverage shape.
+
 ## Secret Store Backends
 
 File: `apps/server/src/adapters/secretstore/<id>.ts`.

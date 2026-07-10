@@ -130,10 +130,10 @@ export/import; list/edit/delete. See [ADR 0014](docs/adr/0014-report-designer-st
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T8.5.1 | Domain: ReportDefinition, validate, compile, export envelope | [details](IMPLEMENTATION_PLAN_DETAILS.md#t851-report-domain) | T1.1 | ⬜ |
-| T8.5.2 | `reports` uService: schema, CRUD, export/import, seed-on-init | [details](IMPLEMENTATION_PLAN_DETAILS.md#t852-reports-uservice) | T8.5.1, T2.2 | ⬜ |
-| T8.5.3 | Web: report designer (list/create/edit/delete, import/export) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t853-report-designer-ui) | T8.5.2, T6.1 | ⬜ |
-| T8.5.4 | Web: ReportView execution (compile → query → table/chart, param re-run) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t854-reportview-execution) | T8.5.1, T8.1, T2.5d | ⬜ |
+| T8.5.1 | Domain: ReportDefinition, validate, compile, export envelope | [details](IMPLEMENTATION_PLAN_DETAILS.md#t851-report-domain) | T1.1 | ✅ |
+| T8.5.2 | `reports` uService: schema, CRUD, export/import, seed-on-init | [details](IMPLEMENTATION_PLAN_DETAILS.md#t852-reports-uservice) | T8.5.1, T2.2 | ✅ |
+| T8.5.3 | Web: report designer (list/create/edit/delete, import/export) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t853-report-designer-ui) | T8.5.2, T6.1 | ✅ |
+| T8.5.4 | Web: ReportView execution (compile → query → table/chart, param re-run) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t854-reportview-execution) | T8.5.1, T8.1, T2.5d | ✅ |
 
 ### E8.6 — Query datasets (`data` uService)
 
@@ -141,22 +141,43 @@ Datasets as **data, not code**: a SQL-literate user defines a new aggregation as
 read-only `SELECT` over already-synced facts — no migration, no deploy. Executed on a
 read-only DB handle (writes/DDL impossible by construction), surfaced in the catalog
 beside built-ins, so the report designer needs zero changes. Finishes ADR 0014 one layer
-down; see [ADR 0015](docs/adr/0015-query-datasets-stored-selects.md).
+down; see [ADR 0016](docs/adr/0016-query-datasets-stored-selects.md) (0015 was taken by ChartHost).
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T8.6.1 | Migration `0006_query_datasets` + read-only DB handle wiring | [details](IMPLEMENTATION_PLAN_DETAILS.md#t861-query-datasets-migration-and-read-only-handle) | T2.2 | ⬜ |
-| T8.6.2 | Generic query-dataset connector, `deriveColumns`, resolver fallback, catalog merge | [details](IMPLEMENTATION_PLAN_DETAILS.md#t862-generic-connector-and-resolver) | T8.6.1, T2.5d | ⬜ |
-| T8.6.3 | `data` routes: `/query-datasets` CRUD + `/preview` | [details](IMPLEMENTATION_PLAN_DETAILS.md#t863-query-datasets-routes) | T8.6.2 | ⬜ |
-| T8.6.4 | Web: query-datasets screen (CodeMirror SQL editor, preview, nav) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t864-query-datasets-ui) | T8.6.3, T6.1 | ⬜ |
-| T8.6.5 | ADR 0015 + UBIQUITOUS/PLUGIN/ARCHITECTURE updates | [details](IMPLEMENTATION_PLAN_DETAILS.md#t865-query-datasets-docs) | T8.6.1 | ⬜ |
+| T8.6.1 | Migration `0006_query_datasets` + read-only DB handle wiring | [details](IMPLEMENTATION_PLAN_DETAILS.md#t861-query-datasets-migration-and-read-only-handle) | T2.2 | ✅ |
+| T8.6.2 | Generic query-dataset connector, `deriveColumns`, resolver fallback, catalog merge | [details](IMPLEMENTATION_PLAN_DETAILS.md#t862-generic-connector-and-resolver) | T8.6.1, T2.5d | ✅ |
+| T8.6.3 | `data` routes: `/query-datasets` CRUD + `/preview` | [details](IMPLEMENTATION_PLAN_DETAILS.md#t863-query-datasets-routes) | T8.6.2 | ✅ |
+| T8.6.4 | Web: query-datasets screen (CodeMirror SQL editor w/ schema autocomplete, preview, nav) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t864-query-datasets-ui) | T8.6.3, T6.1 | ✅ |
+| T8.6.5 | ADR 0016 + UBIQUITOUS/PLUGIN/ARCHITECTURE updates | [details](IMPLEMENTATION_PLAN_DETAILS.md#t865-query-datasets-docs) | T8.6.1 | ✅ |
 
-### E9 — First report: Copilot model spend
+### E8.7 — Report-provisioned query datasets (`reports` ⋈ `data`)
+
+Reports become **self-contained**: a Report Definition embeds its own query-dataset SQL, the
+`reports` service **provisions** (upserts) those into `query_datasets` on save/import and
+**garbage-collects** them when no report references them. Import a report JSON into a fresh
+system and it just works — no migration, no connector code. See
+[ADR 0017](docs/adr/0017-report-provisioned-datasets.md) and
+[design spec](docs/superpowers/specs/2026-07-10-report-provisioned-datasets-design.md).
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T9.1 | Spend aggregation views and report queries | [details](IMPLEMENTATION_PLAN_DETAILS.md#t91-spend-aggregation-views) | T2.5d, T2.5e | ⬜ |
-| T9.2 | Seed the Copilot Spend Report Definition and validate | [details](IMPLEMENTATION_PLAN_DETAILS.md#t92-seed-copilot-spend-report) | T9.1, T8.5.4 | ⬜ |
+| T8.7.1 | Domain: `ReportDefinition.datasets` + validation (embedded query datasets) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t871-domain-embedded-datasets) | T8.5.1 | ✅ |
+| T8.7.2 | `QueryDatasetRegistry` port + `data` impl (`provision`/`sweep`); remove standalone create | [details](IMPLEMENTATION_PLAN_DETAILS.md#t872-registry-port-and-data-impl) | T8.6.2, T8.6.3 | ✅ |
+| T8.7.3 | `reports` service wiring: provision + GC on seed/create/update/import/delete | [details](IMPLEMENTATION_PLAN_DETAILS.md#t873-reports-provisioning-wiring) | T8.7.1, T8.7.2, T8.5.2 | ✅ |
+| T8.7.4 | Web: report-designer Datasets section (CodeMirror authoring); standalone tab drops create | [details](IMPLEMENTATION_PLAN_DETAILS.md#t874-report-designer-datasets-ui) | T8.7.3, T8.6.4 | ✅ |
+| T8.7.5 | ADR 0017 + UBIQUITOUS + ARCHITECTURE (supersede T9.1 code-dataset approach) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t875-report-provisioned-datasets-docs) | T8.7.1 | ✅ |
+
+### E9 — First report: Copilot model spend (self-contained)
+
+Redesigned on E8.7: the Copilot Spend report is a single importable Report Definition that
+**embeds** its spend aggregations as query-dataset SQL — no views, no derived-connector code
+(the old T9.1 approach is superseded by [ADR 0017](docs/adr/0017-report-provisioned-datasets.md)).
+
+| ID | Task | Details | Depends | Status |
+|----|------|---------|---------|--------|
+| T9.1 | Spend aggregation query datasets (embedded SQL over base facts) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t91-spend-aggregation-query-datasets) | T2.5d, T8.7.1 | ✅ |
+| T9.2 | Seed the self-contained Copilot Spend Report Definition and validate | [details](IMPLEMENTATION_PLAN_DETAILS.md#t92-seed-copilot-spend-report) | T9.1, T8.7.3, T8.5.4 | ✅ |
 
 ### E10 — Packaging
 

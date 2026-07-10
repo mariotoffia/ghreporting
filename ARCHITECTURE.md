@@ -214,6 +214,26 @@ Key DDL decisions (full DDL in IMPLEMENTATION_PLAN_DETAILS.md T2.2):
 - `raw` keeps the original API row (JSON) — reports can be rebuilt when GitHub adds
   fields, without re-syncing.
 
+### Read-only handle for query datasets (ADR 0016)
+
+A **Query Dataset** is a user-authored SQL `SELECT` stored as a row in `query_datasets`
+(never `CREATE VIEW`). The `data` service opens a **second `bun:sqlite` handle in
+`{ readonly: true }` mode** (`openReadOnly`) on the same file and runs all user SQL there,
+so a write/DDL throws at the driver — arbitrary read SQL cannot corrupt the app's tables (a
+second guard wraps every statement as `SELECT * FROM ( … )`, making non-SELECTs a syntax
+error). WAL (ADR 0003) lets it read while syncs write on the read-write handle. The dataset
+resolver falls back to a `query_datasets` lookup on a built-in miss — a dataset created a
+moment ago is queryable with no re-init — and `GET /api/data/datasets` merges these rows
+(coverage always `[]`) beside built-ins, so the report designer lists them unchanged.
+
+**Report-provisioned datasets (ADR 0017).** A Report Definition may embed its query datasets
+inline. The `reports` service **provisions** (upserts) them into `query_datasets` through the data
+service's `QueryDatasetRegistry` port on save/import, and **mark-and-sweep garbage-collects** them
+(the reports table is the root set) when no report references them — so `query_datasets` is a
+registry derived from reports. Reports depends only on the port; the composition root injects the
+concrete. This makes a report self-contained: import the JSON and its panels resolve with no
+migration or connector code.
+
 ## 6. Security Model
 
 Single local user; the goal is that **nothing secret rests in plaintext on disk** and

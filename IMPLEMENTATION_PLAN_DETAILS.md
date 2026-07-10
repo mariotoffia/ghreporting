@@ -1682,7 +1682,7 @@ user SQL runs on a second `Database(dbPath, { readonly: true })` handle, which t
 any write/DDL. No SQL blacklist. WAL is already on (ADR 0003), so the read-only handle
 reads cleanly while syncs write on the read-write handle.
 
-**Refs for the whole epic** ADR 0015, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
+**Refs for the whole epic** ADR 0016, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
 PLUGIN.md, ARCHITECTURE.md §4–5, T9.1 (derived-dataset pattern this mirrors).
 
 **Non-goals (YAGNI — each its own future task):** real `CREATE VIEW`/`DROP VIEW` DDL (we
@@ -1844,10 +1844,10 @@ picker. Green.
 ### T8.6.5 Query datasets docs
 
 **Goal** Record the decision and vocabulary so future work doesn't diverge.
-**Files** create `docs/adr/0015-query-datasets-stored-selects.md` (+ index entry in
+**Files** create `docs/adr/0016-query-datasets-stored-selects.md` (+ index entry in
 `docs/adr/README.md`); edit `UBIQUITOUS.md`, `PLUGIN.md`, `ARCHITECTURE.md`.
 **Produces**
-- **ADR 0015** — context: ADR 0014 made reports data but datasets stayed code; decision:
+- **ADR 0016** — context: ADR 0014 made reports data but datasets stayed code; decision:
   user-defined aggregations as read-only stored SELECTs on a read-only handle, resolver
   fallback, columns auto-derived; rejected: real `CREATE VIEW` DDL, visual builder,
   server-side execution changes. References ADR 0014, 0003.
@@ -1857,88 +1857,284 @@ picker. Green.
   `coverage()` is always empty (never syncs).
 - **ARCHITECTURE.md §4/§5** — one paragraph on the read-only handle + resolver fallback.
 **Tests** none (docs); `make lint` still green (markdown/line-length ≤ 600).
-**Done when** ADR 0015 accepted and linked; the three docs mention Query Datasets; all
+**Done when** ADR 0016 accepted and linked; the three docs mention Query Datasets; all
 docs ≤ 600 lines.
 **Refs** ADR 0014, docs/adr/README.md.
 
 ---
 
+## E8.7 Report-provisioned query datasets
+
+Reports become **self-contained** (ADR 0017, design spec
+`docs/superpowers/specs/2026-07-10-report-provisioned-datasets-design.md`). A Report Definition
+embeds its own query-dataset SQL inline; the `reports` service **provisions** (upserts) those
+rows into `query_datasets` on save/import and **garbage-collects** them when no report references
+them. The `query_datasets` table becomes a **derived registry** — every row is report-managed
+(no `provenance` column, no new migration). Import a report JSON into a fresh system and its
+panels resolve with no migration and no connector code.
+
+**Trust/lifecycle model (confirmed):** every query dataset is report-scoped; provision is
+upsert/overwrite (last write wins); the standalone Query-datasets tab is list + *transient* edit
+(a re-provision from the definition reverts a manual edit); datasets are authored **inside a
+report** (no free-standing create). Built-in connector ids stay reserved — a report cannot shadow
+`premium-requests` (the resolver always prefers built-ins, so a shadow row would be dead).
+
+**Refs for the whole epic** ADR 0017, ADR 0016, ADR 0014, DDD.md §3.7, UBIQUITOUS.md §Reporting,
+ARCHITECTURE.md §2 (dependency rule) / §4–5, the E8.5 reports service, the E8.6 query-dataset
+connector + routes.
+
+**Non-goals (YAGNI):** a DB-stored refcount/join table (the reports table is the GC root set — a
+sweep is cheap at this scale); per-dataset ownership/permissions (single-user local app);
+migrating pre-existing standalone E8.6 rows (none exist); cross-report dataset sharing guarantees
+(a report should embed what it needs — sweep roots are embedded ids only).
+
+### T8.7.1 Domain: embedded datasets
+
+**Goal** `ReportDefinition` can carry its query-dataset SQL inline, validated by the same
+zero-dependency domain code the server and web both run.
+**Files** edit `packages/domain/src/report.ts` (+ `report.test.ts`). No change to
+`toExport`/`parseExport` — the envelope already moves the whole definition, so embedded datasets
+travel with export/import for free.
+**Produces**
+
+```ts
+export interface QueryDatasetDef {
+  id: string;            // kebab-case catalog id
+  title: string;
+  description?: string;
+  sql: string;           // one SELECT; uses :org, :from, :to
+}
+export interface ReportDefinition {
+  version: 1;
+  parameters: ReportParameter[];
+  panels: ReportPanel[];
+  datasets?: QueryDatasetDef[]; // NEW — optional; provisioned on save/import
+}
+```
+
+`validateDefinition` gains a `datasets` pass (only when the field is present): each entry is an
+object; `id` matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`; `title` and `sql` are non-empty strings;
+`description` (if present) is a string; ids are unique within the definition. It does **not**
+check built-in-id collisions or SQL validity — the zero-dependency package cannot; the data
+service owns that at provision time (T8.7.2). Keep the existing panel/parameter validation
+unchanged; the placeholder scan already ignores `datasets` (placeholders live only in `query`).
+**Tests** a definition with a valid `datasets` array passes; missing `datasets` still passes
+(optional); a non-kebab id, empty `sql`, empty `title`, non-string `description`, and duplicate
+ids each throw `ValidationError`; `parseExport` of an envelope carrying `datasets` round-trips.
+**Done when** green; `report.ts` ≤ 500; `packages/domain` still imports nothing.
+**Refs** T8.5.1 (domain aggregate), ADR 0017.
+
+### T8.7.2 Registry port + `data` impl
+
+**Goal** One narrow port the `reports` service calls to materialize/clean up query datasets, and
+its implementation in the `data` service (which owns the table, `roDb`, `deriveColumns`, and the
+built-in id set). Remove the now-obsolete standalone create route.
+**Files** create `apps/server/src/services/data/query-dataset-registry.ts` (the port type +
+factory over an existing data-service context; test beside); edit
+`apps/server/src/services/data/service.ts` to construct and expose the registry on the
+`DataService` interface; edit `apps/server/src/services/data/routes-query-datasets.ts` to
+**delete** `POST /query-datasets` (provisioning is the only creator now) and its tests. Keep both
+files ≤ 500.
+**Produces**
+
+```ts
+export interface QueryDatasetRegistry {
+  // Validate + deriveColumns EVERY def first (no half-applied provision), then upsert each
+  // (INSERT OR REPLACE by id) with the cached columns JSON. Throws ValidationError (400) on bad
+  // SQL, AppError("dataset.reserved", …, 409) if an id equals a built-in connector id.
+  provision(defs: QueryDatasetDef[]): void;
+  // Delete every query_datasets row whose id is NOT in referencedIds (mark-and-sweep GC).
+  sweep(referencedIds: Set<string>): void;
+}
+export function createQueryDatasetRegistry(deps: {
+  db(): Database;            // read-write handle (owns query_datasets)
+  roDb: Database;            // read-only handle deriveColumns validates on
+  isBuiltin(id: string): boolean;
+  now(): Date;
+}): QueryDatasetRegistry;
+```
+
+`DataService` gains a `readonly datasets: QueryDatasetRegistry` (undefined-safe: only constructed
+when `opts.roDb` exists; under a `:memory:` config the reports service skips provisioning).
+`provision` reuses `deriveColumns(roDb, sql)` and the same kebab-id/`INSERT OR REPLACE` SQL shape
+as the old create route; upsert must preserve `created_at` on replace (read the existing row's
+`created_at`, or use `INSERT … ON CONFLICT(id) DO UPDATE SET … , created_at=created_at`).
+**Tests** `provision` derives + inserts a new dataset (queryable immediately via the resolver);
+re-`provision` with changed SQL overwrites columns + `updated_at` and keeps `created_at`;
+`provision` of a built-in id throws 409; a writing/malformed SQL throws 400 and **nothing** is
+inserted (validate-all-before-write); `sweep(new Set(["keep"]))` deletes every other row but keeps
+`keep`; `POST /query-datasets` now 404s. In-memory RW DB + a read-only handle over a temp file
+(as in the E8.6 tests).
+**Done when** green; `service.ts` + `routes-query-datasets.ts` + `query-dataset-registry.ts` each
+≤ 500.
+**Refs** T8.6.2 (`deriveColumns`, connector), T8.6.3 (route shape being trimmed), ADR 0017.
+
+### T8.7.3 Reports provisioning wiring
+
+**Goal** The `reports` service provisions embedded datasets and GCs orphans on every definition
+mutation, using the injected registry — respecting the dependency rule (reports depends on the
+port, not the data service).
+**Files** edit `apps/server/src/services/reports/service.ts` (accept a
+`datasets?: QueryDatasetRegistry` dep; call it from init-seed / POST / PUT / DELETE / import);
+edit `apps/server/src/app.ts` to pass the data service's `registry` into `createReportsService`.
+Keep `service.ts` ≤ 500 (extract a small `provisioning.ts` helper if needed).
+**Produces**
+- `createReportsService(opts?: { datasets?: QueryDatasetRegistry })`. When absent (e.g. a
+  `:memory:` test without a read-only handle), provisioning is skipped (built-in datasets still
+  work; the feature is inert).
+- A private `reconcile(mutatedDef?)`: `datasets?.provision(mutatedDef?.datasets ?? [])`, then
+  compute `referenced = ⋃ (def.datasets[].id)` over **all** rows in the `reports` table and call
+  `datasets?.sweep(referenced)`. Called after the write in `seedOnInit`, `POST /`, `PUT /:id`,
+  `import`, and `DELETE /:id` (on delete, provision nothing; just re-sweep against the remaining
+  reports).
+- Provisioning throws (bad SQL, reserved id) propagate as the route's 400/409 — validate the
+  definition (incl. `provision`) **before** committing the reports-table write so an import never
+  half-applies (definition stored but datasets rejected, or vice-versa). Order: validate
+  definition → `provision` (throws ⇒ 4xx, nothing written) → write reports row → `sweep`.
+**Tests** creating/importing a report with embedded `datasets` makes each panel's dataset
+resolvable via `POST /api/data/query` immediately and lists them in `/api/data/datasets`; updating
+a report to drop a dataset GCs it (gone from `/datasets`) unless another report still embeds it;
+deleting a report GCs its now-orphaned datasets but keeps ones a second report embeds; a report
+whose embedded SQL is invalid returns 400 and writes **no** reports row; seed-on-init provisions.
+Use the file-backed harness (RW + read-only handle) so provisioning runs for real.
+**Done when** green; touched files ≤ 500.
+**Refs** T8.7.1, T8.7.2, T8.5.2 (seed-on-init + route shape), ARCHITECTURE.md §2 (only the
+composition root wires concretes).
+
+### T8.7.4 Report-designer Datasets UI
+
+**Goal** Author embedded datasets where the report lives, and stop the standalone tab from
+creating free-standing datasets.
+**Files** edit `apps/web/src/features/reports/Designer.tsx` (a **Datasets** section in the report
+form: add/edit `{id, title, sql}` rows reusing `query-datasets/SqlField` + the `/preview` call;
+the panel dataset dropdown lists the definition's embedded datasets alongside built-ins from
+`/api/data/datasets`); edit `apps/web/src/features/query-datasets/Editor.tsx` to **remove** the
+"New query dataset" create path (list + transient edit only) and its create test; adjust
+`features/query-datasets/api.ts` (drop `createQueryDataset`). Keep Designer.tsx ≤ 500 (extract a
+`reports/DatasetsSection.tsx` if it grows past it).
+**Produces** a report form where the datasets a report needs are authored inline (CodeMirror SQL +
+Preview), saved as part of the definition (so Save/Export carry them); the standalone Query-datasets
+tab becomes a read/edit view over provisioned rows with a visible note that edits are transient
+(reverted on the owning report's next save). No new report-execution code — ReportView is unchanged.
+**Tests** Designer datasets-section round-trips against a mocked api (add a dataset row, it appears
+in the panel dropdown, Save posts a definition whose `datasets` includes it); the query-datasets
+`api` client no longer exports `createQueryDataset`; Editor smoke shows list + edit, no create
+button. SSR/`renderToString` for presentational bits; `SqlField` stays lazy.
+**Done when** manual: build a report with an embedded `GROUP BY` dataset, Preview shows the right
+columns, Save + reload persists it, and the panel renders; `bun run build` succeeds. Green.
+**Refs** T8.7.3, T8.6.4 (SqlField/preview), T8.5.3 (report designer), ARCHITECTURE.md §7.
+
+### T8.7.5 Report-provisioned datasets docs
+
+**Goal** Record the decision and vocabulary; mark the old code-dataset approach superseded.
+**Files** create `docs/adr/0017-report-provisioned-datasets.md` (+ index row in
+`docs/adr/README.md`); edit `UBIQUITOUS.md` and `ARCHITECTURE.md`.
+**Produces**
+- **ADR 0017** — context: ADR 0014 made reports data and ADR 0016 made datasets data, but a
+  report still wasn't self-contained; decision: definitions embed their datasets, the reports
+  service provisions (upsert) via the `QueryDatasetRegistry` port and GCs orphans (reports table
+  is the root set); rejected: event-bus provisioning (can't fail an import synchronously), a
+  DB-stored refcount, a separate user-owned dataset class. References ADR 0016, 0014; notes it
+  **supersedes** the T9.1 views+connector approach.
+- **UBIQUITOUS.md** — **Provisioned dataset** (a Query Dataset materialized from a Report
+  Definition, upserted on save/import and GC'd when no report references it). No synonyms.
+- **ARCHITECTURE.md §4/§5** — one paragraph: reports provision/GC datasets via a port; the
+  `query_datasets` table is a derived registry.
+**Tests** none (docs); `make lint` green; all docs ≤ 600 lines.
+**Done when** ADR 0017 accepted + linked; the two docs mention provisioned datasets.
+**Refs** ADR 0016, ADR 0014, docs/adr/README.md.
+
+---
+
 ## E9 First report
 
-### T9.1 Spend aggregation views
+### T9.1 Spend aggregation query datasets
 
-**Goal** SQL views answering "spend per model / user / team / month".
-**Files** create `apps/server/src/adapters/db/migrations/0005_spend_views.ts`
-(0003 = copilot_seats, 0004 = reports are taken; + index entry); register derived
-datasets in the data service; tests beside.
+**Goal** The two spend aggregations ("spend per model / user / month" and "… per team /
+month"), authored as **embedded query-dataset SQL** (E8.7) — no views, no migration, no
+connector code. Superseded old approach: migration `0005_spend_views` + derived connectors
+(dropped per ADR 0017; 0005 stays unused so E8.6's `0006` numbering is undisturbed).
+**Files** author the two SELECTs as string constants the T9.2 seed embeds — put them in
+`apps/server/src/services/reports/seed/copilot-spend.sql.ts` (exported strings, so they can be
+unit-tested and imported into the seed builder) + `copilot-spend.sql.test.ts`. No migration, no
+data-service connector changes.
+**Produces** two `QueryDatasetDef` SQL bodies, bound by `:org`/`:from`/`:to`, over the base
+fact tables the `premium-requests` connector (T2.5d) landed:
 
 ```sql
-CREATE VIEW v_premium_spend_user_model_month AS
-SELECT substr(f.day, 1, 7) AS month, o.login AS org, u.login AS user, f.model AS model,
-       SUM(f.quantity)                    AS requests,
+-- spend-by-user-model-month
+SELECT substr(f.day, 1, 7) AS month, u.login AS user, f.model AS model,
+       SUM(f.quantity)                      AS requests,
        SUM(COALESCE(f.gross_amount_usd, 0)) AS gross_usd,
        SUM(COALESCE(f.net_amount_usd, 0))   AS net_usd
 FROM usage_facts f
-JOIN orgs o  ON o.id = f.org_id
+JOIN orgs o  ON o.id = f.org_id AND o.login = :org
 JOIN skus s  ON s.id = f.sku_id AND s.name = 'copilot_premium_request'
 LEFT JOIN users u ON u.id = f.user_id
-WHERE f.metric LIKE 'premium_requests%'
-GROUP BY month, org, user, model;
+WHERE f.metric LIKE 'premium_requests%' AND f.day BETWEEN :from AND :to
+GROUP BY month, user, model;
 
--- NOTE: a user in two teams counts in both team rollups (by design; documented here).
-CREATE VIEW v_premium_spend_team_month AS
-SELECT substr(f.day, 1, 7) AS month, o.login AS org, t.slug AS team, f.model AS model,
+-- spend-by-team-month  (a user in two teams counts in both rollups — by design)
+SELECT substr(f.day, 1, 7) AS month, t.slug AS team, f.model AS model,
        SUM(f.quantity)                    AS requests,
        SUM(COALESCE(f.net_amount_usd, 0)) AS net_usd
 FROM usage_facts f
-JOIN orgs o ON o.id = f.org_id
+JOIN orgs o ON o.id = f.org_id AND o.login = :org
 JOIN skus s ON s.id = f.sku_id AND s.name = 'copilot_premium_request'
 JOIN team_members tm ON tm.user_id = f.user_id
 JOIN teams t ON t.id = tm.team_id
-GROUP BY month, org, team, model;
+WHERE f.day BETWEEN :from AND :to
+GROUP BY month, team, model;
 ```
 
-Register **derived datasets** `spend-by-user-model-month` and `spend-by-team-month`:
-connectors whose `coverage()` returns `[]` (never sync — they read what T2.5d
-landed) and whose `select` queries the view with month-range + filter support
-(`filter.user`, `filter.model`, `filter.team` → `IN` clauses). Their `meta.description`
-must say "derived from premium-requests — sync that dataset first".
-**Tests** seed facts → view rows equal hand-computed sums (include a quota-covered
-row with net 0 and an overage row); user-in-two-teams counted twice in team view,
-once in user view; derived dataset select honors filters; org-level facts
-(`user IS NULL`) roll up under user `NULL` and are excluded from team view.
-**Done when** `POST /api/data/query {dataset: "spend-by-user-model-month", …}`
-returns correct aggregates from seeded facts.
-**Refs** ARCHITECTURE.md §5, T2.5d, domain `premiumRequestCost`.
+`org` is bound in the JOIN (not a client-side filter) so the query dataset needs only
+`:org`/`:from`/`:to` — the per-model/user breakdown is columns, pivoted client-side by
+`execute.ts` (so E8.6's org+range binding suffices; no filter-map support needed). The panel's
+`byUser` view narrows to the latest closed month in the report definition's `range`/pivot, not in
+SQL.
+**Tests** provision each SQL as a query dataset over a file-backed test DB, seed facts (include a
+quota-covered row with `net 0` and an overage row), then `select`/`POST query` → rows equal
+hand-computed sums; a user in two teams is counted twice in the team dataset, once in the
+user dataset; org-level facts (`user_id IS NULL`) roll up under `user = NULL` and are excluded
+from the team dataset; `:from`/`:to` clamp the month window; a different `:org` returns nothing.
+**Done when** both SELECTs return correct aggregates from seeded facts when provisioned as query
+datasets (no migration, no connector).
+**Refs** T8.7.1/T8.7.2 (embed + provision), T2.5d (facts), domain `premiumRequestCost`, ADR 0017.
 
-### T9.2 Seed Copilot Spend report
+### T9.2 Seed the self-contained Copilot Spend report
 
-**Goal** The requirement-10 deliverable, now as **data**: open the app, get model spend
-per user from a seeded Report Definition executed by the generic E8.5 engine — no
-hardcoded builder.
+**Goal** The requirement-10 deliverable as a **single importable, self-contained** Report
+Definition: open the app (or import the JSON) and get model spend per user — the seed embeds its
+own datasets, which provision on init (E8.7). No views, no connector code, no hardcoded builder.
 **Files** author `apps/server/src/services/reports/seed/copilot-spend.json` (the seed the
-`reports` service loads on init, T8.5.2); test `copilot-spend.seed.test.ts` asserting the
-JSON passes `validateDefinition` and compiles to the expected panels.
+`reports` service loads on init, T8.5.2), embedding the T9.1 SQL in its `datasets`; test
+`copilot-spend.seed.test.ts`.
 **Produces** a `ReportDefinition` (stable id `copilot-spend`) with:
 
+- `datasets`: `[{id: "spend-by-user-model-month", title, sql: <T9.1 #1>},
+  {id: "spend-by-team-month", title, sql: <T9.1 #2>}]` — provisioned on seed-init (T8.7.3).
 - Parameters: `org` (kind `org`), `range` (kind `dateRange`, default = last 6 full months).
 - Panel `spend` ← `{dataset: "spend-by-user-model-month", query: {org: "{{org}}",
   range: "{{range}}"}}`, `transform.pivot {x: "month", series: "model", value: "net_usd"}`,
   chartSpec `{type: "stacked-bar", xColumn: "month", seriesColumns: [per-model net_usd]}`.
-- Panel `byUser` ← same dataset filtered to the latest closed month, chartSpec
-  `{type: "bar", xColumn: "user", seriesColumns: ["net_usd"]}`.
+- Panel `byUser` ← same dataset, chartSpec `{type: "bar", xColumn: "user",
+  seriesColumns: ["net_usd"]}` (latest-month narrowing lives in the pivot/compile, not SQL).
 - Panel `byTeam` ← `{dataset: "spend-by-team-month", query: {org: "{{org}}",
   range: "{{range}}"}}`, table only (no chartSpec).
 
-Execution is E8.5's `ReportView`: `POST /api/data/query {sync: true}` per panel (sync
-progress via the notifications SSE), pivot in `execute.ts`, render tables + charts. No
-new UI code — this task only ships and validates the seed.
-**Acceptance (manual, real org):** pick one closed month; download GitHub's own
-premium-request usage CSV for it; the report's per-model and per-user totals match to the
-cent (document any rounding delta and its cause in the task's commit message).
-**Done when** the seed loads on init, the report renders through `ReportView`, and numbers
-validate once against the CSV.
-**Refs** T8.5.1 (validate/compile), T8.5.2 (seed-on-init), T8.5.4 (ReportView), T9.1.
+Execution is E8.5's `ReportView`: `POST /api/data/query {sync: true}` per panel, pivot in
+`execute.ts`, render tables + charts. No new UI code — this task ships and validates the seed.
+**Tests** `copilot-spend.json` passes `validateDefinition` (incl. the new `datasets` rules) and
+`compile`s to the expected panels; seed-on-init provisions both datasets (they appear in
+`/api/data/datasets`); the report resolves each panel end-to-end against seeded facts. Round-trip:
+`export` → `parseExport` of the seed preserves `datasets` (proving self-containment / portability).
+**Acceptance (manual, real org):** pick one closed month; download GitHub's own premium-request
+usage CSV for it; the report's per-model and per-user totals match to the cent (document any
+rounding delta and its cause in the task's commit message).
+**Done when** the seed loads on init, provisions its datasets, renders through `ReportView`,
+exports/imports as one self-contained JSON, and numbers validate once against the CSV.
+**Refs** T8.7.1/T8.7.3 (embed + provision), T8.5.1 (validate/compile), T8.5.2 (seed-on-init),
+T8.5.4 (ReportView), T9.1, ADR 0017.
 
 ---
 

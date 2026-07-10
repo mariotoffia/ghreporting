@@ -1,6 +1,6 @@
 import { buildApp } from "./app";
 
-const { app, kernel, ctx } = buildApp();
+const { app, kernel, ctx, roDb } = buildApp();
 await kernel.start(app);
 
 const server = Bun.serve({
@@ -24,6 +24,7 @@ const shutdown = async () => {
   if (shuttingDown) return; // a second signal must not run stop() twice / exit mid-cleanup
   shuttingDown = true;
   await kernel.stop();
+  roDb?.close(); // the read-only query-dataset handle (ADR 0016), before the RW handle
   ctx.db.close(); // after services stop, so none use a dead handle; lets WAL checkpoint
   server.stop();
   process.exit(0);

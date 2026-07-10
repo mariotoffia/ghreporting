@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
-import { openDatabase } from "./adapters/db/database";
+import { openDatabase, openReadOnly } from "./adapters/db/database";
 import { runMigrations } from "./adapters/db/migrate";
 import { migrations } from "./adapters/db/migrations";
 import { createGitHubClient } from "./adapters/github/client";
@@ -21,6 +21,7 @@ import { githubPatProvider } from "./services/credentials/providers/github-pat";
 import { createCredentialsService } from "./services/credentials/service";
 import { createDataService } from "./services/data/service";
 import { createNotificationsService } from "./services/notifications/service";
+import { createReportsService } from "./services/reports/service";
 import { createWorkspaceService } from "./services/workspace/service";
 
 /**
@@ -41,6 +42,10 @@ export function buildApp(
   const bus = createEventBus(log);
   const db = openDatabase(config.dbPath);
   runMigrations(db, migrations);
+  // Second handle for user query-dataset SQL (ADR 0016). Only for a real file — a
+  // `:memory:` DB has no shared second handle, so query datasets are inert under that
+  // config (the resolver falls through to NotFound, built-ins keep working).
+  const roDb = config.dbPath === ":memory:" ? undefined : openReadOnly(config.dbPath);
   const { ctx, ...bind } = createContext({ db, bus, config, log });
   const kernel = createKernel(ctx);
   const app = new Hono();
@@ -107,7 +112,13 @@ export function buildApp(
   );
   kernel.register(credentials);
   kernel.register(auth);
-  kernel.register(createDataService({ gh }));
+  const data = createDataService({ gh, roDb });
+  kernel.register(data);
+  // reports after data: it seeds the Copilot Spend definition on init and its ReportView
+  // executes against the data service in the browser (ADR 0014). It provisions its embedded
+  // query datasets (ADR 0017) through the data service's registry — injected here (only the
+  // composition root wires concretes; reports depends on the DatasetProvisioner port).
+  kernel.register(createReportsService({ datasets: data.datasets }));
   // workspace last: it only owns the workbooks/bindings tables and depends on
   // nothing but the shared DB (DDD.md §3.3), so registration order is cosmetic here.
   kernel.register(createWorkspaceService());
@@ -115,7 +126,7 @@ export function buildApp(
   app.get("/api/health", (c) => c.json({ status: "ok", service: "ghreporting" }));
   wireErrorEnvelope(app, log);
 
-  return { app, kernel, ctx, bind, sessions };
+  return { app, kernel, ctx, bind, sessions, roDb };
 }
 
 /** The shared JSON error envelope every route answers failures with. */
