@@ -83,7 +83,9 @@ scripts/            codegen & tooling scripts                      [arrives with
 | `test` / `test-integration` | Unit tests / + live GitHub tests (needs `GH_TOKEN`) |
 | `lint` / `lint-fix` / `vet` | Biome check / auto-fix / TypeScript typecheck |
 | `build` | Production frontend bundle |
-| `package` | Single-binary executable (T10.1) |
+| `package` | Single self-contained executable → `dist/ghreporting` |
+| `package-app` | Double-clickable `dist/GH Reporting.app` (macOS) |
+| `package-all` | Cross-compiled darwin-arm64 / windows-x64 / linux-x64 binaries |
 | `clean` | Remove deps and build artifacts |
 
 ## License

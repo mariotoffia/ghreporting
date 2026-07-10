@@ -116,5 +116,7 @@ dist
 *.db
 *.db-journal
 *.out
+# bun --compile cross-target intermediates (leaked into CWD)
+*.bun-build
 .DS_Store
 .ghreporting/

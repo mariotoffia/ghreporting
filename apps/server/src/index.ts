@@ -1,7 +1,13 @@
 import { buildApp } from "./app";
+import { embedded } from "./embedded";
+import { mountStatic } from "./static";
 
 const { app, kernel, ctx, roDb } = buildApp();
 await kernel.start(app);
+// Serve the embedded UI last — after kernel.start mounted /api/*, so the catch-all
+// `*` route can't shadow them (Hono matches in registration order). No-op in dev,
+// where the manifest is empty and Vite serves the UI.
+mountStatic(app, embedded);
 
 const server = Bun.serve({
   port: ctx.config.port,

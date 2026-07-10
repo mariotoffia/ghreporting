@@ -183,8 +183,8 @@ Redesigned on E8.7: the Copilot Spend report is a single importable Report Defin
 
 | ID | Task | Details | Depends | Status |
 |----|------|---------|---------|--------|
-| T10.1 | Embed frontend and compile single binary | [details](IMPLEMENTATION_PLAN_DETAILS.md#t101-embed-and-compile) | T6.4 (all UI tasks you want shipped) | ⬜ |
-| T10.2 | macOS .app wrapper and cross-compile | [details](IMPLEMENTATION_PLAN_DETAILS.md#t102-app-wrapper-and-cross-compile) | T10.1 | ⬜ |
+| T10.1 | Embed frontend and compile single binary | [details](IMPLEMENTATION_PLAN_DETAILS.md#t101-embed-and-compile) | T6.4 (all UI tasks you want shipped) | ✅ |
+| T10.2 | macOS .app wrapper and cross-compile | [details](IMPLEMENTATION_PLAN_DETAILS.md#t102-app-wrapper-and-cross-compile) | T10.1 | ✅ |
 
 ### E11 — Quality hardening
 
