@@ -33,6 +33,67 @@ describe("validateDefinition", () => {
     expect(validateDefinition(def)).toEqual(def);
   });
 
+  describe("embedded datasets (E8.7)", () => {
+    // Cast so the accept-case `toEqual` types cleanly; reject cases pass deliberately bad shapes.
+    const withDatasets = (datasets: unknown) => ({ ...validDef(), datasets }) as ReportDefinition;
+
+    it("accepts a definition with a valid datasets array", () => {
+      const def = withDatasets([
+        { id: "spend-by-model", title: "Spend by model", sql: "SELECT 1 AS x" },
+        { id: "by-team", title: "By team", description: "per team", sql: "SELECT 2 AS y" },
+      ]);
+      expect(validateDefinition(def)).toEqual(def);
+    });
+
+    it("accepts a definition with no datasets field (optional)", () => {
+      expect(validateDefinition(validDef())).toEqual(validDef());
+    });
+
+    it("rejects a non-kebab dataset id", () => {
+      expect(() =>
+        validateDefinition(withDatasets([{ id: "Not Kebab", title: "t", sql: "SELECT 1" }])),
+      ).toThrow(/kebab/);
+    });
+
+    it("rejects an empty title or sql", () => {
+      expect(() =>
+        validateDefinition(withDatasets([{ id: "a", title: "", sql: "SELECT 1" }])),
+      ).toThrow(ValidationError);
+      expect(() => validateDefinition(withDatasets([{ id: "a", title: "t", sql: "  " }]))).toThrow(
+        ValidationError,
+      );
+    });
+
+    it("rejects a non-string description", () => {
+      expect(() =>
+        validateDefinition(
+          withDatasets([{ id: "a", title: "t", sql: "SELECT 1", description: 5 }]),
+        ),
+      ).toThrow(/description/);
+    });
+
+    it("rejects duplicate dataset ids", () => {
+      expect(() =>
+        validateDefinition(
+          withDatasets([
+            { id: "dup", title: "t", sql: "SELECT 1" },
+            { id: "dup", title: "u", sql: "SELECT 2" },
+          ]),
+        ),
+      ).toThrow(/duplicate/);
+    });
+
+    it("rejects a non-array datasets field", () => {
+      expect(() => validateDefinition(withDatasets({}))).toThrow(ValidationError);
+    });
+
+    it("round-trips embedded datasets through export/import", () => {
+      const def = withDatasets([{ id: "d1", title: "D1", sql: "SELECT 1 AS x" }]);
+      const env = toExport("R", null, def as ReportDefinition);
+      expect(parseExport(env).definition).toEqual(def);
+    });
+  });
+
   it("rejects a wrong version", () => {
     expect(() => validateDefinition({ ...validDef(), version: 2 })).toThrow(ValidationError);
     expect(() => validateDefinition({ ...validDef(), version: 2 })).toThrow(/version/);

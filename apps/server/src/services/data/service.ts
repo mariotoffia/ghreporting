@@ -9,6 +9,7 @@ import { premiumRequestsConnector } from "./connectors/premium-requests";
 import { addDays } from "./connectors/util";
 import type { DatasetConnector, DatasetQuery, GitHubClient, ResultSet } from "./ports";
 import { type QueryDatasetRow, queryDatasetConnector } from "./query-dataset";
+import { createQueryDatasetRegistry, type QueryDatasetRegistry } from "./query-dataset-registry";
 import { registerQueryDatasetRoutes } from "./routes-query-datasets";
 import { type SchedulerTimers, startScheduler } from "./scheduler";
 import { readSyncState, syncGaps } from "./sync";
@@ -30,6 +31,9 @@ function builtinConnectors(now: () => Date): DatasetConnector[] {
 export interface DataService extends MicroService {
   registerConnector(c: DatasetConnector): void;
   queryDataset(id: string, q: DatasetQuery, opts?: { sync?: boolean }): Promise<ResultSet>;
+  /** Report-provisioned query-dataset lifecycle (ADR 0017). Undefined under a `:memory:` config
+   *  (no read-only handle) — the reports service then skips provisioning. */
+  datasets?: QueryDatasetRegistry;
 }
 
 /**
@@ -117,10 +121,23 @@ export function createDataService(opts: {
     return { org: q.org, range: { from, to }, filter: q.filter, limit };
   }
 
+  // Report-provisioning port (ADR 0017). Deps are lazy closures, so this is valid to build now
+  // and safe to call after init (ctx.db set, built-ins registered). Only when a read-only handle
+  // exists — otherwise query datasets are inert and the reports service skips provisioning.
+  const registry = opts.roDb
+    ? createQueryDatasetRegistry({
+        db: () => ctx.db,
+        roDb: opts.roDb,
+        isBuiltin: (id) => connectors.has(id),
+        now: () => ctx.config.now(),
+      })
+    : undefined;
+
   return {
     name: "data",
     registerConnector,
     queryDataset,
+    datasets: registry,
     init(c) {
       ctx = c;
       // tests pass their own connectors; production registers the built-ins
@@ -222,7 +239,6 @@ export function createDataService(opts: {
         registerQueryDatasetRoutes(app, {
           db: () => ctx.db,
           roDb: opts.roDb,
-          isBuiltin: (id) => connectors.has(id),
           now: () => ctx.config.now(),
         });
       }

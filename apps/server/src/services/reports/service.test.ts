@@ -240,11 +240,14 @@ describe("reports service — size guard", () => {
 });
 
 describe("copilot-spend seed", () => {
-  it("is a valid definition that compiles to a runnable premium-requests query", () => {
+  it("is a self-contained definition that compiles to a runnable embedded-dataset query", () => {
     const def = validateDefinition(seed.definition);
+    // Redesigned on E8.7/ADR 0017: the report embeds its spend datasets and points its panels at
+    // them (no built-in premium-requests, no views/connector code).
+    expect(def.datasets?.map((d) => d.id)).toContain("spend-by-user-model-month");
     const plan = compile(def, { org: "acme", range: { from: "2026-01-01", to: "2026-01-31" } });
     const panel = plan.panels[0];
-    expect(panel?.dataset).toBe("premium-requests");
+    expect(panel?.dataset).toBe("spend-by-user-model-month");
     expect(panel?.query).toMatchObject({
       org: "acme",
       range: { from: "2026-01-01", to: "2026-01-31" },

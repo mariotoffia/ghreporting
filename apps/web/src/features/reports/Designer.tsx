@@ -19,9 +19,12 @@ import {
   reportExportPath,
   updateReport,
 } from "./api";
+import { DatasetsSection } from "./DatasetsSection";
 import {
+  type DatasetFormFields,
   type PanelFormFields,
   type ParameterFields,
+  toDatasetFields,
   toPanelFields,
   toParameterFields,
   validateForm,
@@ -199,6 +202,7 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
   const [description, setDescription] = useState("");
   const [params, setParams] = useState<ParameterFields[]>([]);
   const [panels, setPanels] = useState<PanelFormFields[]>([blankPanel()]);
+  const [datasets, setDatasets] = useState<DatasetFormFields[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Seed the form from the loaded report exactly once (edit mode). The ref guard stops a
@@ -212,6 +216,7 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
     setDescription(r.description ?? "");
     setParams(r.definition.parameters.map(toParameterFields));
     setPanels(r.definition.panels.map(toPanelFields));
+    setDatasets((r.definition.datasets ?? []).map(toDatasetFields));
   }, [existing.data]);
 
   const save = useMutation({
@@ -229,7 +234,7 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
       setError("Name is required.");
       return;
     }
-    const result = validateForm(params, panels);
+    const result = validateForm(params, panels, datasets);
     if ("error" in result) {
       setError(result.error);
       return;
@@ -241,7 +246,14 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
     });
   }
 
-  const datasets = catalog.data ?? [];
+  // Panel dataset options: built-ins/query datasets from the catalog PLUS the datasets this
+  // definition embeds (which may not be provisioned into the catalog yet).
+  const datasetOptions = [
+    ...datasets
+      .filter((d) => d.id.trim() !== "")
+      .map((d) => ({ id: d.id, title: d.title || d.id })),
+    ...(catalog.data ?? []).map((d) => ({ id: d.id, title: d.title })),
+  ];
   return (
     <section className="reports report-form">
       <header className="reports-head">
@@ -329,7 +341,7 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
               onChange={(e) => setPanels(updateAt(panels, i, { dataset: e.target.value }))}
             >
               <option value="">— dataset —</option>
-              {datasets.map((d) => (
+              {datasetOptions.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.title}
                 </option>
@@ -359,6 +371,8 @@ function ReportForm({ editId, onDone }: { editId: string | null; onDone: () => v
           Add panel
         </button>
       </fieldset>
+
+      <DatasetsSection datasets={datasets} onChange={setDatasets} />
     </section>
   );
 }

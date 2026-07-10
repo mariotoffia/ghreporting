@@ -35,6 +35,7 @@ bounded context ([DDD.md](DDD.md)).
 | **Seat** | A current Copilot seat assignment per (org, user) — state, not a Usage Fact. |
 | **Report download** | Fetching a usage-metrics report's signed URL without auth headers (`GitHubClient.download`, ADR 0012). |
 | **Query Dataset** | A user-authored, read-only Dataset defined by a stored SQL `SELECT` over already-synced facts (ADR 0016). Never syncs (coverage is always empty); runs on the read-only handle. Listed in the Catalog beside built-in Datasets. Not a "view", "custom query", or "saved query". |
+| **Provisioned Dataset** | A Query Dataset materialized from a Report Definition's embedded `datasets` (ADR 0017): upserted into the catalog when the report is saved/imported and garbage-collected when no report references it. The definition is authoritative; a manual edit is transient. Not a "temporary" or "cached" dataset. |
 
 ## Workspace (`workspace` uService, `sheets`/`charts` features)
 

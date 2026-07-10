@@ -226,6 +226,14 @@ resolver falls back to a `query_datasets` lookup on a built-in miss — a datase
 moment ago is queryable with no re-init — and `GET /api/data/datasets` merges these rows
 (coverage always `[]`) beside built-ins, so the report designer lists them unchanged.
 
+**Report-provisioned datasets (ADR 0017).** A Report Definition may embed its query datasets
+inline. The `reports` service **provisions** (upserts) them into `query_datasets` through the data
+service's `QueryDatasetRegistry` port on save/import, and **mark-and-sweep garbage-collects** them
+(the reports table is the root set) when no report references them — so `query_datasets` is a
+registry derived from reports. Reports depends only on the port; the composition root injects the
+concrete. This makes a report self-contained: import the JSON and its panels resolve with no
+migration or connector code.
+
 ## 6. Security Model
 
 Single local user; the goal is that **nothing secret rests in plaintext on disk** and

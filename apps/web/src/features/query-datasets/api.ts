@@ -54,8 +54,8 @@ export interface DeriveContext {
   range?: { from: string; to: string };
 }
 
-export const createQueryDataset = (body: QueryDatasetInput & DeriveContext) =>
-  api.post<QueryDatasetSummary>("/api/data/query-datasets", body);
+// No create client (ADR 0017): query datasets are provisioned from report definitions, not
+// created standalone. Update is a transient edit — the owning report's next save re-provisions.
 export const updateQueryDataset = (
   id: string,
   body: Partial<Omit<QueryDatasetInput, "id">> & DeriveContext,

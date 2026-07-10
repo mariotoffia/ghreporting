@@ -3,6 +3,7 @@
 // run the SAME domain `validateDefinition` the server uses, so edit-time errors match
 // write-time errors exactly (ADR 0014 — one validator, both tiers). No React here.
 import {
+  type QueryDatasetDef,
   type ReportDefinition,
   type ReportPanel,
   type ReportParameter,
@@ -15,6 +16,14 @@ export interface ParameterFields {
   kind: ReportParameter["kind"];
   /** Raw text: a literal for org/string, a number for number, JSON {from,to} for dateRange. */
   defaultText: string;
+}
+
+/** One embedded query dataset's editable fields (ADR 0017). `sql` is authored in CodeMirror. */
+export interface DatasetFormFields {
+  id: string;
+  title: string;
+  description: string;
+  sql: string;
 }
 
 export interface PanelFormFields {
@@ -103,16 +112,31 @@ export function buildPanel(f: PanelFormFields): ReportPanel {
   return panel;
 }
 
+/** Assemble one embedded query dataset from raw form fields (trimmed; empty description → omitted). */
+export function buildDataset(f: DatasetFormFields): QueryDatasetDef {
+  const ds: QueryDatasetDef = { id: f.id.trim(), title: f.title.trim(), sql: f.sql };
+  if (f.description.trim() !== "") ds.description = f.description.trim();
+  return ds;
+}
+
+/** Reverse of buildDataset: a stored dataset → editable form fields (for edit mode). */
+export function toDatasetFields(d: QueryDatasetDef): DatasetFormFields {
+  return { id: d.id, title: d.title, description: d.description ?? "", sql: d.sql };
+}
+
 /** Build the full definition and run the domain validator (throws ValidationError). */
 export function assembleDefinition(
   params: ParameterFields[],
   panels: PanelFormFields[],
+  datasets: DatasetFormFields[] = [],
 ): ReportDefinition {
   const def: ReportDefinition = {
     version: 1,
     parameters: params.map(buildParameter),
     panels: panels.map(buildPanel),
   };
+  // Only attach the field when there are datasets, so a report without embedded SQL exports clean.
+  if (datasets.length > 0) def.datasets = datasets.map(buildDataset);
   return validateDefinition(def);
 }
 
@@ -120,9 +144,10 @@ export function assembleDefinition(
 export function validateForm(
   params: ParameterFields[],
   panels: PanelFormFields[],
+  datasets: DatasetFormFields[] = [],
 ): { definition: ReportDefinition } | { error: string } {
   try {
-    return { definition: assembleDefinition(params, panels) };
+    return { definition: assembleDefinition(params, panels, datasets) };
   } catch (e) {
     if (e instanceof ValidationError) return { error: e.message };
     throw e;

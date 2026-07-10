@@ -2,9 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { ValidationError } from "@ghreporting/domain";
 import {
   assembleDefinition,
+  buildDataset,
   buildPanel,
   buildParameter,
+  type DatasetFormFields,
   type PanelFormFields,
+  toDatasetFields,
   toPanelFields,
   toParameterFields,
   validateForm,
@@ -94,6 +97,47 @@ describe("round-trip (edit mode)", () => {
     ]) {
       expect(buildParameter(toParameterFields(p))).toEqual(p);
     }
+  });
+});
+
+describe("embedded datasets (E8.7)", () => {
+  const dsFields: DatasetFormFields = {
+    id: "spend-by-model",
+    title: "Spend by model",
+    description: "",
+    sql: "SELECT 1 AS x",
+  };
+
+  it("buildDataset trims and omits an empty description", () => {
+    expect(buildDataset(dsFields)).toEqual({
+      id: "spend-by-model",
+      title: "Spend by model",
+      sql: "SELECT 1 AS x",
+    });
+    expect(buildDataset({ ...dsFields, description: " per model " }).description).toBe("per model");
+  });
+
+  it("toDatasetFields is the inverse (missing description → empty string)", () => {
+    expect(toDatasetFields({ id: "a", title: "A", sql: "SELECT 1" })).toEqual({
+      id: "a",
+      title: "A",
+      description: "",
+      sql: "SELECT 1",
+    });
+  });
+
+  it("assembleDefinition attaches datasets only when present", () => {
+    expect(assembleDefinition([orgParam, rangeParam], [goodPanel]).datasets).toBeUndefined();
+    const def = assembleDefinition([orgParam, rangeParam], [goodPanel], [dsFields]);
+    expect(def.datasets).toEqual([
+      { id: "spend-by-model", title: "Spend by model", sql: "SELECT 1 AS x" },
+    ]);
+  });
+
+  it("validateForm surfaces a bad dataset id as an inline error", () => {
+    const r = validateForm([orgParam, rangeParam], [goodPanel], [{ ...dsFields, id: "Bad Id" }]);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toMatch(/kebab/);
   });
 });
 

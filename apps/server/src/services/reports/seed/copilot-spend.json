@@ -1,29 +1,61 @@
 {
   "name": "Copilot Spend",
-  "description": "GitHub Copilot premium-request spend by model over a date range.",
+  "description": "GitHub Copilot premium-request spend by model, user and team over a date range.",
   "definition": {
     "version": 1,
+    "datasets": [
+      {
+        "id": "spend-by-user-model-month",
+        "title": "Premium-request spend by user, model and month",
+        "description": "Derived from premium-requests — sync that dataset first.",
+        "sql": "SELECT substr(f.day, 1, 7) AS month, u.login AS user, f.model AS model, SUM(f.quantity) AS requests, SUM(COALESCE(f.gross_amount_usd, 0)) AS gross_usd, SUM(COALESCE(f.net_amount_usd, 0)) AS net_usd FROM usage_facts f JOIN orgs o ON o.id = f.org_id AND o.login = :org JOIN skus s ON s.id = f.sku_id AND s.name = 'copilot_premium_request' LEFT JOIN users u ON u.id = f.user_id WHERE f.metric LIKE 'premium_requests%' AND f.day BETWEEN :from AND :to GROUP BY month, user, model ORDER BY month, user, model"
+      },
+      {
+        "id": "spend-by-team-month",
+        "title": "Premium-request spend by team, model and month",
+        "description": "A user in two teams counts in both team rollups (by design).",
+        "sql": "SELECT substr(f.day, 1, 7) AS month, t.slug AS team, f.model AS model, SUM(f.quantity) AS requests, SUM(COALESCE(f.net_amount_usd, 0)) AS net_usd FROM usage_facts f JOIN orgs o ON o.id = f.org_id AND o.login = :org JOIN skus s ON s.id = f.sku_id AND s.name = 'copilot_premium_request' JOIN team_members tm ON tm.user_id = f.user_id JOIN teams t ON t.id = tm.team_id WHERE f.metric LIKE 'premium_requests%' AND f.day BETWEEN :from AND :to GROUP BY month, team, model ORDER BY month, team, model"
+      }
+    ],
     "parameters": [
       { "name": "org", "kind": "org", "default": "" },
       {
         "name": "range",
         "kind": "dateRange",
-        "default": { "from": "2026-01-01", "to": "2026-01-31" }
+        "default": { "from": "2026-01-01", "to": "2026-06-30" }
       }
     ],
     "panels": [
       {
-        "id": "spend-by-model",
+        "id": "spend",
         "title": "Premium-request spend by model",
-        "dataset": "premium-requests",
+        "dataset": "spend-by-user-model-month",
         "query": { "org": "{{org}}", "range": "{{range}}" },
-        "transform": { "pivot": { "x": "day", "series": "model", "value": "net_usd" } },
+        "transform": { "pivot": { "x": "month", "series": "model", "value": "net_usd" } },
         "chartSpec": {
           "type": "stacked-bar",
-          "xColumn": "day",
+          "xColumn": "month",
           "seriesColumns": [],
           "title": "Spend by model (USD)"
         }
+      },
+      {
+        "id": "byUser",
+        "title": "Spend by user",
+        "dataset": "spend-by-user-model-month",
+        "query": { "org": "{{org}}", "range": "{{range}}" },
+        "chartSpec": {
+          "type": "bar",
+          "xColumn": "user",
+          "seriesColumns": ["net_usd"],
+          "title": "Spend by user (USD)"
+        }
+      },
+      {
+        "id": "byTeam",
+        "title": "Spend by team",
+        "dataset": "spend-by-team-month",
+        "query": { "org": "{{org}}", "range": "{{range}}" }
       }
     ]
   }

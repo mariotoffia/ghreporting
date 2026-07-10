@@ -11,7 +11,6 @@ import { api } from "../../lib/client";
 import { lastNDays } from "../explorer/format";
 import { Preview } from "../explorer/Preview";
 import {
-  createQueryDataset,
   DATASETS_KEY,
   deleteQueryDataset,
   getQueryDataset,
@@ -20,7 +19,6 @@ import {
   type PreviewResult,
   previewQueryDataset,
   QUERY_DATASETS_KEY,
-  type QueryDatasetInput,
   type QueryDatasetSummary,
   updateQueryDataset,
 } from "./api";
@@ -29,27 +27,17 @@ import {
 // stays out of the initial chunk (this whole feature is already a lazy route in App.tsx).
 const SqlField = lazy(() => import("./SqlField").then((m) => ({ default: m.SqlField })));
 
-type Mode = { kind: "list" } | { kind: "new" } | { kind: "edit"; id: string };
+type Mode = { kind: "list" } | { kind: "edit"; id: string };
 
 export function Editor() {
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   if (mode.kind === "list") {
-    return (
-      <QueryDatasetList
-        onNew={() => setMode({ kind: "new" })}
-        onEdit={(id) => setMode({ kind: "edit", id })}
-      />
-    );
+    return <QueryDatasetList onEdit={(id) => setMode({ kind: "edit", id })} />;
   }
-  return (
-    <QueryDatasetForm
-      editId={mode.kind === "edit" ? mode.id : null}
-      onDone={() => setMode({ kind: "list" })}
-    />
-  );
+  return <QueryDatasetForm editId={mode.id} onDone={() => setMode({ kind: "list" })} />;
 }
 
-function QueryDatasetList({ onNew, onEdit }: { onNew: () => void; onEdit: (id: string) => void }) {
+function QueryDatasetList({ onEdit }: { onEdit: (id: string) => void }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: QUERY_DATASETS_KEY, queryFn: listQueryDatasets });
   const del = useMutation({
@@ -64,12 +52,13 @@ function QueryDatasetList({ onNew, onEdit }: { onNew: () => void; onEdit: (id: s
     <section className="query-datasets">
       <header className="reports-head">
         <h2>Query datasets</h2>
-        <div className="reports-actions">
-          <button type="button" onClick={onNew}>
-            New query dataset
-          </button>
-        </div>
       </header>
+      {/* Datasets are provisioned from reports (ADR 0017): they're authored in the report designer.
+          Edits here are transient — the owning report's next save re-provisions and reverts them. */}
+      <p className="reports-empty">
+        Managed by reports. Author datasets in a report's Datasets section; edits here are temporary
+        until the owning report is saved again.
+      </p>
       {list.isLoading && <p>Loading…</p>}
       {list.isError && <p className="form-error">Failed to load query datasets.</p>}
       {list.data && (
@@ -90,7 +79,7 @@ export function QueryDatasetTable({
   onDelete: (id: string) => void;
 }) {
   if (datasets.length === 0) {
-    return <p className="reports-empty">No query datasets yet — create one.</p>;
+    return <p className="reports-empty">No query datasets yet — add one to a report.</p>;
   }
   return (
     <table className="reports-table">
@@ -123,12 +112,11 @@ export function QueryDatasetTable({
   );
 }
 
-function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: () => void }) {
+function QueryDatasetForm({ editId, onDone }: { editId: string; onDone: () => void }) {
   const qc = useQueryClient();
   const existing = useQuery({
     queryKey: [...QUERY_DATASETS_KEY, editId],
-    queryFn: () => getQueryDataset(editId as string),
-    enabled: editId !== null,
+    queryFn: () => getQueryDataset(editId),
   });
   // The configured org (GHR_ORG) prefills the sample org, like the explorer does.
   const config = useQuery({
@@ -136,7 +124,6 @@ function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: (
     queryFn: () => api.get<{ org: string | null }>("/api/data/config"),
   });
 
-  const [id, setId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [sql, setSql] = useState("SELECT ");
@@ -156,7 +143,6 @@ function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: (
     const r = existing.data;
     if (!r || seeded.current) return;
     seeded.current = true;
-    setId(r.id);
     setTitle(r.title);
     setDescription(r.description ?? "");
     setSql(r.sql);
@@ -185,15 +171,13 @@ function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: (
   });
 
   const save = useMutation({
-    mutationFn: (body: QueryDatasetInput) =>
-      editId
-        ? updateQueryDataset(editId, {
-            title: body.title,
-            description: body.description,
-            sql: body.sql,
-            ...sample(),
-          })
-        : createQueryDataset({ ...body, ...sample() }),
+    mutationFn: () =>
+      updateQueryDataset(editId, {
+        title: title.trim(),
+        description: description.trim() || null,
+        sql,
+        ...sample(),
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QUERY_DATASETS_KEY });
       qc.invalidateQueries({ queryKey: DATASETS_KEY });
@@ -204,21 +188,15 @@ function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: (
 
   function onSave() {
     setError(null);
-    if (!editId && id.trim() === "") return setError("Id is required.");
     if (title.trim() === "") return setError("Title is required.");
     if (sql.trim() === "") return setError("SQL is required.");
-    save.mutate({
-      id: id.trim(),
-      title: title.trim(),
-      description: description.trim() || null,
-      sql,
-    });
+    save.mutate();
   }
 
   return (
     <section className="query-datasets query-dataset-form">
       <header className="reports-head">
-        <h2>{editId ? "Edit query dataset" : "New query dataset"}</h2>
+        <h2>Edit query dataset</h2>
         <div className="reports-actions">
           <button type="button" onClick={onDone}>
             Cancel
@@ -238,13 +216,8 @@ function QueryDatasetForm({ editId, onDone }: { editId: string | null; onDone: (
       )}
       <label className="field">
         Id
-        {/* PK, kebab-case, immutable once created. */}
-        <input
-          value={id}
-          disabled={editId !== null}
-          placeholder="spend-by-model"
-          onChange={(e) => setId(e.target.value)}
-        />
+        {/* Immutable: the id is the report-provisioned catalog id (ADR 0017). */}
+        <input value={editId} disabled />
       </label>
       <label className="field">
         Title

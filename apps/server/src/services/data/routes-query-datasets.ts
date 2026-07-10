@@ -1,23 +1,21 @@
-// CRUD + preview routes for query datasets (ADR 0016), mounted under /api/data by the data
-// service. Split out of service.ts to keep both files ≤ 500 lines. Ids are user-supplied
-// kebab-case; a built-in connector id or an existing row wins a clash (409). All SQL runs on
-// the read-only handle via deriveColumns / queryDatasetConnector — this file never executes
-// user SQL itself. TOCTOU discipline mirrors reports/workspace: the body read is the only
-// await, then existence-check + write run with no yield (bun:sqlite is synchronous).
+// Read/edit/preview routes for query datasets (ADR 0016), mounted under /api/data by the data
+// service. Query datasets are CREATED by report provisioning (ADR 0017), not here — this file
+// exposes list/get, a transient PUT (a re-provision from the owning report reverts a manual
+// edit), DELETE, /preview, and /schema. All SQL runs on the read-only handle via deriveColumns /
+// queryDatasetConnector — this file never executes user SQL itself. TOCTOU discipline mirrors
+// reports/workspace: the body read is the only await, then check + write run with no yield.
 import type { Database } from "bun:sqlite";
 import type { Hono } from "hono";
-import { AppError, NotFoundError, ValidationError } from "../../kernel/errors";
+import { NotFoundError, ValidationError } from "../../kernel/errors";
 import { capBytes, jsonObject, nonEmpty } from "../../kernel/http";
 import { deriveColumns, type QueryDatasetRow, queryDatasetConnector } from "./query-dataset";
 
 const MAX_SQL_BYTES = 64 * 1024;
 const MAX_LIMIT = 1000;
-const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; // kebab-case, matches DatasetMeta.id shape
 
 export interface QueryDatasetRouteDeps {
   db(): Database; // read-write handle (owns the query_datasets table)
   roDb: Database; // read-only handle every user SELECT runs on
-  isBuiltin(id: string): boolean; // built-in connector ids win a name clash
   now(): Date;
 }
 
@@ -64,27 +62,8 @@ export function registerQueryDatasetRoutes(app: Hono, deps: QueryDatasetRouteDep
     ),
   );
 
-  app.post("/query-datasets", async (c) => {
-    const body = await jsonObject(c.req);
-    // Validate everything before the first write (no half-applied create).
-    const id = nonEmpty(body.id, "id");
-    if (!ID_RE.test(id)) throw new ValidationError("id must be kebab-case (a-z, 0-9, hyphens)");
-    const title = nonEmpty(body.title, "title");
-    const description = toDescription(body.description);
-    const sql = capBytes(nonEmpty(body.sql, "sql"), MAX_SQL_BYTES, "sql");
-    if (deps.isBuiltin(id))
-      throw new AppError("dataset.reserved", `${id} is a built-in dataset`, 409);
-    const columns = deriveColumns(roDb, sql, sampleFrom(body)); // ValidationError (400) on bad SQL
-    if (rowById(id))
-      throw new AppError("dataset.exists", `query dataset ${id} already exists`, 409);
-    const at = deps.now().toISOString();
-    db()
-      .query(
-        "INSERT INTO query_datasets(id,title,description,sql,columns,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-      )
-      .run(id, title, description, sql, JSON.stringify(columns), at, at);
-    return c.json({ id, title, description, updated_at: at });
-  });
+  // No standalone create route (ADR 0017): query datasets are provisioned from report
+  // definitions via QueryDatasetRegistry, never created free-standing over HTTP.
 
   app.get("/query-datasets/:id", (c) => {
     const id = c.req.param("id");

@@ -11,7 +11,6 @@ mock.module("../../lib/client", () => ({ api: { get, post, put, del } }));
 const {
   listQueryDatasets,
   getQueryDataset,
-  createQueryDataset,
   updateQueryDataset,
   deleteQueryDataset,
   previewQueryDataset,
@@ -24,13 +23,6 @@ describe("query-datasets api client", () => {
 
     await getQueryDataset("spend-by-model");
     expect(get).toHaveBeenCalledWith("/api/data/query-datasets/spend-by-model");
-
-    await createQueryDataset({ id: "spend-by-model", title: "Spend", sql: "SELECT 1" });
-    expect(post).toHaveBeenCalledWith("/api/data/query-datasets", {
-      id: "spend-by-model",
-      title: "Spend",
-      sql: "SELECT 1",
-    });
 
     await updateQueryDataset("spend-by-model", { title: "Renamed" });
     expect(put).toHaveBeenCalledWith("/api/data/query-datasets/spend-by-model", {

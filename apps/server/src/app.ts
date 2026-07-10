@@ -112,11 +112,13 @@ export function buildApp(
   );
   kernel.register(credentials);
   kernel.register(auth);
-  kernel.register(createDataService({ gh, roDb }));
+  const data = createDataService({ gh, roDb });
+  kernel.register(data);
   // reports after data: it seeds the Copilot Spend definition on init and its ReportView
-  // executes against the data service in the browser (ADR 0014). It owns only the
-  // `reports` table, so this order is about intent, not a hard dependency.
-  kernel.register(createReportsService());
+  // executes against the data service in the browser (ADR 0014). It provisions its embedded
+  // query datasets (ADR 0017) through the data service's registry — injected here (only the
+  // composition root wires concretes; reports depends on the DatasetProvisioner port).
+  kernel.register(createReportsService({ datasets: data.datasets }));
   // workspace last: it only owns the workbooks/bindings tables and depends on
   // nothing but the shared DB (DDD.md §3.3), so registration order is cosmetic here.
   kernel.register(createWorkspaceService());

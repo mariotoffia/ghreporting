@@ -13,11 +13,12 @@ import { loadConfig } from "../../kernel/config";
 import { createContext } from "../../kernel/context";
 import { nullLogger } from "../../kernel/testutil";
 import type { GitHubClient } from "./ports";
-import { createDataService } from "./service";
+import { createDataService, type DataService } from "./service";
 
 let rw: Database;
 let ro: Database;
 let app: Hono;
+let svc: DataService;
 
 const json = (body: unknown) => ({
   method: "POST",
@@ -45,7 +46,7 @@ beforeEach(() => {
     },
     log,
   });
-  const svc = createDataService({ gh: {} as GitHubClient, roDb: ro });
+  svc = createDataService({ gh: {} as GitHubClient, roDb: ro });
   svc.init(ctx);
   app = new Hono();
   wireErrorEnvelope(app, log);
@@ -56,20 +57,29 @@ afterEach(() => {
   rw.close();
 });
 
-const create = (over: Record<string, unknown> = {}) =>
-  app.request(
-    "/query-datasets",
-    json({
-      id: "spend-by-model",
-      title: "Spend by model",
-      sql: "SELECT model, SUM(amount) AS total FROM sales GROUP BY model ORDER BY model",
-      ...over,
-    }),
-  );
+// Query datasets are provisioned (ADR 0017), not created over HTTP — seed the read/edit routes
+// under test by provisioning through the registry the reports service uses.
+const create = (over: { id?: string; title?: string; sql?: string } = {}) =>
+  svc.datasets?.provision([
+    {
+      id: over.id ?? "spend-by-model",
+      title: over.title ?? "Spend by model",
+      sql:
+        over.sql ?? "SELECT model, SUM(amount) AS total FROM sales GROUP BY model ORDER BY model",
+    },
+  ]);
 
 describe("query-datasets routes", () => {
-  it("POST creates and GET/:id returns full row with parsed columns", async () => {
-    expect((await create()).status).toBe(200);
+  it("the standalone create route is gone (404)", async () => {
+    const res = await app.request(
+      "/query-datasets",
+      json({ id: "x", title: "x", sql: "SELECT 1" }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("GET/:id returns the full provisioned row with parsed columns", async () => {
+    create();
     const got = await (await app.request("/query-datasets/spend-by-model")).json();
     expect(got.id).toBe("spend-by-model");
     expect(got.sql).toContain("GROUP BY model");
@@ -80,34 +90,14 @@ describe("query-datasets routes", () => {
   });
 
   it("GET list omits sql and columns", async () => {
-    await create();
+    create();
     const list = (await (await app.request("/query-datasets")).json()) as Record<string, unknown>[];
     expect(list).toHaveLength(1);
     expect(Object.keys(list[0] ?? {}).sort()).toEqual(["description", "id", "title", "updated_at"]);
   });
 
-  it("POST with writing SQL is rejected 400 (never mutates)", async () => {
-    const res = await create({ id: "evil", sql: "DELETE FROM sales" });
-    expect(res.status).toBe(400);
-    expect(rw.query("SELECT count(*) AS c FROM sales").get()).toEqual({ c: 3 });
-  });
-
-  it("POST with an id equal to a built-in connector is rejected 409", async () => {
-    const res = await create({ id: "premium-requests" });
-    expect(res.status).toBe(409);
-  });
-
-  it("POST with a duplicate id is rejected 409", async () => {
-    await create();
-    expect((await create()).status).toBe(409);
-  });
-
-  it("POST with a non-kebab id is rejected 400", async () => {
-    expect((await create({ id: "Not Kebab" })).status).toBe(400);
-  });
-
   it("PUT partial update leaves other fields intact and re-derives columns", async () => {
-    await create();
+    create();
     const res = await app.request("/query-datasets/spend-by-model", {
       ...json({ title: "Renamed" }),
       method: "PUT",
@@ -119,7 +109,7 @@ describe("query-datasets routes", () => {
   });
 
   it("DELETE removes the row", async () => {
-    await create();
+    create();
     expect((await app.request("/query-datasets/spend-by-model", { method: "DELETE" })).status).toBe(
       200,
     );
@@ -161,7 +151,7 @@ describe("query-datasets routes", () => {
     // Create passes (probe org="" takes the safe branch), then querying with a non-JSON org
     // hits json_extract → SQLite throws → must be a 400 via the connector's guard, not a 500.
     const sql = "SELECT CASE WHEN :org = '' THEN 1 ELSE json_extract(:org, '$.a') END AS x";
-    expect((await create({ id: "risky", sql })).status).toBe(200);
+    create({ id: "risky", sql }); // provisions fine (probe takes the safe branch)
     const res = await app.request(
       "/query",
       json({
@@ -182,7 +172,7 @@ describe("query-datasets routes", () => {
   });
 
   it("a created dataset is immediately queryable and listed in /datasets (no re-init)", async () => {
-    await create();
+    create();
     const q = { org: "acme", range: { from: "2026-01-01", to: "2026-12-31" } };
     const rs = await (
       await app.request("/query", json({ dataset: "spend-by-model", q, sync: false }))

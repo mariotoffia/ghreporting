@@ -23,11 +23,24 @@ export interface ReportPanel {
   chartSpec?: Record<string, unknown>; // ChartSpec; opaque here — ChartHost validates deeply
 }
 
+/**
+ * A query dataset the report carries inline (ADR 0017). The `reports` service provisions these
+ * into the data catalog on save/import and GCs them when no report references them, so a Report
+ * is self-contained: import the JSON and its panels resolve with no migration or connector code.
+ */
+export interface QueryDatasetDef {
+  id: string; // kebab-case catalog id
+  title: string;
+  description?: string;
+  sql: string; // one SELECT; uses :org, :from, :to
+}
+
 /** The declarative, portable spec of a Report. The store's only source of truth. */
 export interface ReportDefinition {
   version: 1;
   parameters: ReportParameter[];
   panels: ReportPanel[];
+  datasets?: QueryDatasetDef[]; // embedded query datasets, provisioned on save/import (ADR 0017)
 }
 
 /** A compiled definition: panels with every `{{placeholder}}` resolved. */
@@ -104,6 +117,30 @@ export function validateDefinition(json: unknown): ReportDefinition {
       throw new ValidationError(`duplicate parameter name: ${p.name}`);
     }
     parameterNames.add(p.name);
+  }
+
+  // Embedded query datasets (ADR 0017). Shape + intra-definition consistency only — this
+  // zero-dependency package cannot know built-in ids or validate SQL (the data service does that
+  // at provision time). `description` is optional; ids are kebab-case and unique.
+  if (def.datasets !== undefined) {
+    const datasetIds = new Set<string>();
+    for (const raw of asArray(def.datasets, "datasets")) {
+      const ds = asObject(raw, "dataset");
+      if (typeof ds.id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(ds.id)) {
+        throw new ValidationError("dataset id must be kebab-case (a-z, 0-9, hyphens)");
+      }
+      if (datasetIds.has(ds.id)) throw new ValidationError(`duplicate dataset id: ${ds.id}`);
+      datasetIds.add(ds.id);
+      if (typeof ds.title !== "string" || ds.title.trim() === "") {
+        throw new ValidationError(`dataset ${ds.id} title must be a non-empty string`);
+      }
+      if (typeof ds.sql !== "string" || ds.sql.trim() === "") {
+        throw new ValidationError(`dataset ${ds.id} sql must be a non-empty string`);
+      }
+      if (ds.description !== undefined && typeof ds.description !== "string") {
+        throw new ValidationError(`dataset ${ds.id} description must be a string`);
+      }
+    }
   }
 
   const panelIds = new Set<string>();
