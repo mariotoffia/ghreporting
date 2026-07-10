@@ -9,6 +9,8 @@ describe("loadConfig", () => {
     expect(c.org).toBeUndefined();
     expect(c.origins).toEqual(["http://localhost:5173", "http://localhost:8787"]);
     expect(c.secretBackend).toBeUndefined();
+    // Committed public OAuth App client id (safe to expose) — baked in so users need no env var.
+    expect(c.githubClientId).toBe("Ov23liy55Xl6hGJvlKGk");
     expect(c.packaged).toBe(false);
     expect(c.now()).toBeInstanceOf(Date);
   });
@@ -21,6 +23,7 @@ describe("loadConfig", () => {
       GHR_ORG: "acme",
       GHR_ORIGINS: "http://a.test , http://b.test",
       GHR_SECRET_BACKEND: "encrypted-file",
+      GHR_GITHUB_CLIENT_ID: "Iv1.abc123",
       GHR_PACKAGED: "1",
     });
     expect(c.port).toBe(9000);
@@ -28,6 +31,7 @@ describe("loadConfig", () => {
     expect(c.org).toBe("acme");
     expect(c.origins).toEqual(["http://a.test", "http://b.test"]);
     expect(c.secretBackend).toBe("encrypted-file");
+    expect(c.githubClientId).toBe("Iv1.abc123");
     expect(c.packaged).toBe(true);
   });
 

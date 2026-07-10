@@ -63,11 +63,14 @@ bounded context ([DDD.md](DDD.md)).
 | Term | Meaning |
 |------|---------|
 | **Credential** | A stored secret plus metadata (type, backend, status). Identity: `type:label`. |
-| **Credential Provider** | Plugin for one credential *type*: how to obtain, validate, and describe it (first: `github-pat`). |
+| **Credential Provider** | Plugin for one credential *type*: how to obtain, validate, and describe it (`github-pat`, `github-oauth`). |
 | **Secret Store** | The port services use to read/write secret material. |
 | **Backend** | A Secret Store implementation: `keychain` (macOS) or `encrypted-file`. |
 | **Account** | The key a secret is stored under inside a backend. |
 | **Rotation** | Replacing a credential's secret after an expiring/invalid status. |
+| **Sign-in** | Obtaining a GitHub token through the app instead of pasting a minted PAT — the `github-oauth` device-flow path (ADR 0018). Not "log in" (that is the local **Unlock**). |
+| **Device Flow** | GitHub's OAuth grant for a public client: the user authorizes out-of-band by typing a short **User Code** at `github.com/login/device` while the app polls with only its public `client_id`. The one auth that ships in a downloadable binary with no embedded secret. |
+| **User Code** | The short code (e.g. `WDJB-MJHT`) the human types at GitHub to authorize a Device Flow sign-in. Distinct from the server-only device code the app polls with, which never reaches the browser. |
 
 ## Access (`auth` uService)
 

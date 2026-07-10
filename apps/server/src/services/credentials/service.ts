@@ -9,9 +9,17 @@ import type {
   SecretStoreBackend,
   ServiceContext,
 } from "../../kernel/ports";
-import type { CredentialProvider, CredentialStatus } from "./ports";
+import type { CredentialProvider, CredentialStatus, DeviceFlowProvider } from "./ports";
 
 const REVALIDATE_MS = 6 * 3_600_000;
+
+/** Single default instance per credential type — the convention `github-pat:default` uses. */
+const defaultId = (type: string) => `${type}:default`;
+
+/** A provider also implements the optional device-flow port (interface segregation, ADR 0018). */
+function isDeviceFlow(p: CredentialProvider): p is CredentialProvider & DeviceFlowProvider {
+  return typeof (p as Partial<DeviceFlowProvider>).startDevice === "function";
+}
 
 interface Timers {
   setInterval: typeof setInterval;
@@ -21,6 +29,12 @@ interface Timers {
 export interface CredentialsService extends MicroService {
   /** A per-request token reader for a credential id (e.g. "github-pat:default"). */
   tokenProvider(id: string): () => Promise<string>;
+  /**
+   * A per-request reader that returns the secret of the first configured id in `ids`,
+   * so one GitHub door reads either a device-flow token or a pasted PAT (ADR 0018).
+   * Propagates SecretsLockedError; throws NotFoundError only if none is configured.
+   */
+  firstConfiguredTokenProvider(ids: string[]): () => Promise<string>;
 }
 
 export function createCredentialsService(opts: {
@@ -38,6 +52,9 @@ export function createCredentialsService(opts: {
   let revalHandle: ReturnType<typeof setInterval> | undefined;
 
   const account = (id: string) => `cred.${id}`;
+  // Pending device ceremonies, in memory only (ADR 0018): the deviceCode never reaches the
+  // browser and dies with the process — device codes are short-lived and single-user.
+  const pending = new Map<string, { deviceCode: string; expiresAt: number }>();
 
   function providerFor(id: string): CredentialProvider {
     const type = id.split(":")[0] ?? id; // id = "<type>:label"
@@ -153,6 +170,15 @@ export function createCredentialsService(opts: {
         return secret;
       };
     },
+    firstConfiguredTokenProvider(ids) {
+      return async () => {
+        for (const id of ids) {
+          const secret = await ctx.secrets.get(account(id)); // locked → SecretsLockedError propagates
+          if (secret !== null) return secret; // device-flow preferred when ids is ordered so
+        }
+        throw new NotFoundError(`credential ${ids.join(" or ")}`);
+      };
+    },
     async init(c) {
       ctx = c;
       backend = await selectBackend();
@@ -170,11 +196,32 @@ export function createCredentialsService(opts: {
     },
     routes(app) {
       app.get("/", (c) => {
-        const rows = ctx.db.query("SELECT * FROM credentials_meta").all() as Array<{
-          type: string;
-        }>;
-        // meta only — never secret material; describe() tells the UI what to collect
-        return c.json(rows.map((r) => ({ ...r, describe: providers.get(r.type)?.describe() })));
+        // Enumerate every registered *provider* (not just meta rows), each left-joined with
+        // its `${type}:default` status — so an unconfigured type is visible (status: null),
+        // which the old meta-only list could never show. Never any secret material.
+        const meta = new Map(
+          (
+            ctx.db.query("SELECT * FROM credentials_meta").all() as Array<{
+              id: string;
+              status: string;
+              expires_at: string | null;
+              status_detail: string | null;
+            }>
+          ).map((r) => [r.id, r]),
+        );
+        const entries = [...providers.values()].map((p) => {
+          const id = defaultId(p.type);
+          const row = meta.get(id);
+          return {
+            id,
+            type: p.type,
+            describe: p.describe(),
+            status: row?.status ?? null,
+            expiresAt: row?.expires_at ?? null,
+            statusDetail: row?.status_detail ?? null,
+          };
+        });
+        return c.json(entries);
       });
 
       app.put("/:id", async (c) => {
@@ -209,6 +256,47 @@ export function createCredentialsService(opts: {
         await backend.delete(account(id));
         ctx.db.query("DELETE FROM credentials_meta WHERE id=?").run(id);
         return c.json({ deleted: true });
+      });
+
+      // Device Flow ceremony (ADR 0018). Guarded: providers without DeviceFlowProvider 400.
+      app.post("/:id/device/start", async (c) => {
+        const id = c.req.param("id");
+        const provider = providerFor(id);
+        if (!isDeviceFlow(provider))
+          throw new ValidationError(`credential ${id} does not support device sign-in`);
+        const started = await provider.startDevice(ctx);
+        pending.set(id, {
+          deviceCode: started.deviceCode,
+          expiresAt: ctx.config.now().getTime() + started.expiresIn * 1000,
+        });
+        // deviceCode is deliberately NOT in the response — it stays server-side.
+        return c.json({
+          userCode: started.userCode,
+          verificationUri: started.verificationUri,
+          interval: started.interval,
+          expiresIn: started.expiresIn,
+        });
+      });
+
+      app.post("/:id/device/poll", async (c) => {
+        const id = c.req.param("id");
+        const provider = providerFor(id);
+        if (!isDeviceFlow(provider))
+          throw new ValidationError(`credential ${id} does not support device sign-in`);
+        const entry = pending.get(id);
+        if (!entry || entry.expiresAt <= ctx.config.now().getTime()) {
+          pending.delete(id);
+          throw new AppError("credential.device_expired", "device code expired — start again", 410);
+        }
+        const result = await provider.pollDevice(entry.deviceCode, ctx);
+        if (!result.done) return c.json({ pending: true });
+        // Authorized: validate, then land the token on the exact path PUT uses — and, like PUT,
+        // never persist a secret that validates invalid (parity with the fields form).
+        const status = await provider.validate(result.secret, ctx);
+        if (status.state !== "invalid") await backend.set(account(id), result.secret);
+        applyStatus(id, provider.type, status);
+        pending.delete(id);
+        return c.json({ status: status.state });
       });
     },
   };

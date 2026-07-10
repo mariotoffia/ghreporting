@@ -6,7 +6,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { Binding } from "../../state/bindings";
 
-GlobalRegistrator.register();
+// Register once per process — another DOM suite may already have (bun shares globals across
+// files); a second GlobalRegistrator.register() throws "already globally registered".
+if (typeof (globalThis as { document?: unknown }).document === "undefined") {
+  GlobalRegistrator.register();
+}
 // happy-dom ships no ResizeObserver; ChartHost only needs it to exist.
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
   observe() {}

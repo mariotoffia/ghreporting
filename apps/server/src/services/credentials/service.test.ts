@@ -64,6 +64,47 @@ function fakeProvider(
   };
 }
 
+/** A device-capable provider (type github-oauth) scripting start + a sequence of polls. */
+function fakeDeviceProvider(
+  polls: Array<{ done: false } | { done: true; secret: string }>,
+  validateStatus: CredentialStatus = { state: "ok", scopes: ["read:org"] },
+): CredentialProvider & {
+  startDevice: (ctx: unknown) => Promise<unknown>;
+  pollDevice: (dc: string, ctx: unknown) => Promise<unknown>;
+  started: number;
+} {
+  let i = 0;
+  const p = {
+    type: "github-oauth",
+    started: 0,
+    describe: () => ({
+      type: "github-oauth",
+      title: "GitHub (sign in)",
+      helpUrl: "https://github.com/login/device",
+      flow: "device" as const,
+      fields: [],
+      requiredScopes: ["read:org"],
+    }),
+    validate: async () => validateStatus,
+    startDevice: async () => {
+      p.started++;
+      return {
+        deviceCode: "SECRET_DEVICE_CODE",
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://github.com/login/device",
+        interval: 5,
+        expiresIn: 900,
+      };
+    },
+    pollDevice: async () => polls[i++] ?? { done: false },
+  };
+  return p as unknown as CredentialProvider & {
+    startDevice: (ctx: unknown) => Promise<unknown>;
+    pollDevice: (dc: string, ctx: unknown) => Promise<unknown>;
+    started: number;
+  };
+}
+
 interface Harness {
   ctx: ReturnType<typeof createContext>["ctx"];
   notes: NotificationInput[];
@@ -82,7 +123,9 @@ afterEach(() => {
 async function setup(opts: {
   backends: SecretStoreBackend[];
   provider: CredentialProvider;
+  extraProviders?: CredentialProvider[];
   secretBackend?: string;
+  githubClientId?: string;
 }): Promise<Harness> {
   const db = openDatabase(":memory:");
   open.push(db);
@@ -93,7 +136,12 @@ async function setup(opts: {
   const bus = createEventBus(nullLogger());
   bus.on("credential.expiring", (e) => events.push(e));
   bus.on("credential.invalid", (e) => events.push(e));
-  const config = { ...loadConfig({}), now: () => NOW, secretBackend: opts.secretBackend };
+  const config = {
+    ...loadConfig({}),
+    now: () => NOW,
+    secretBackend: opts.secretBackend,
+    githubClientId: opts.githubClientId,
+  };
   const { ctx, bindNotify, bindResolve, bindSecrets } = createContext({
     db,
     bus,
@@ -115,7 +163,7 @@ async function setup(opts: {
   const cred = createCredentialsService({
     bindSecrets,
     backends: opts.backends,
-    providers: [opts.provider],
+    providers: [opts.provider, ...(opts.extraProviders ?? [])],
     timers,
   });
   await cred.init(ctx);
@@ -357,6 +405,141 @@ describe("credentials service — 6h revalidation", () => {
     h.tick();
     await flush();
     expect(provider.calls).toEqual([]); // locked read short-circuits, no crash
+  });
+});
+
+describe("credentials service — GET / enumerates registered providers (T12.1)", () => {
+  it("lists an unconfigured provider with status null and a configured one with its status", async () => {
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "ok", scopes: ["read:org"] }), // github-pat
+      extraProviders: [fakeDeviceProvider([])], // github-oauth, never configured
+    });
+    const res = await h.app.request("/");
+    const body = (await res.json()) as Array<{ id: string; type: string; status: string | null }>;
+    const oauth = body.find((e) => e.type === "github-oauth");
+    const pat = body.find((e) => e.type === "github-pat");
+    expect(oauth).toMatchObject({ id: "github-oauth:default", status: null }); // visible though unset
+    expect(pat?.status).toBeNull(); // not configured yet either
+    // Configure the PAT, and only its status flips — enumeration still shows both.
+    await h.app.request(`/${ID}`, { method: "PUT", body: JSON.stringify({ secret: "ghp_ok" }) });
+    const after = (await (await h.app.request("/")).json()) as Array<{
+      type: string;
+      status: string | null;
+    }>;
+    expect(after.find((e) => e.type === "github-pat")?.status).toBe("ok");
+    expect(after.find((e) => e.type === "github-oauth")?.status).toBeNull();
+  });
+});
+
+describe("credentials service — device flow ceremony (T12.2)", () => {
+  const OAUTH = "github-oauth:default";
+
+  it("start stores pending and never returns the deviceCode", async () => {
+    const device = fakeDeviceProvider([]);
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "ok" }),
+      extraProviders: [device],
+      githubClientId: "Iv1.x",
+    });
+    const res = await h.app.request(`/${OAUTH}/device/start`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      userCode: "WDJB-MJHT",
+      verificationUri: "https://github.com/login/device",
+      interval: 5,
+      expiresIn: 900,
+    });
+    expect(JSON.stringify(body)).not.toContain("SECRET_DEVICE_CODE");
+  });
+
+  it("poll returns { pending:true } while pending, then stores the secret and reports ok", async () => {
+    const backend = memBackend();
+    const device = fakeDeviceProvider([{ done: false }, { done: true, secret: "gho_live" }]);
+    const h = await setup({
+      backends: [backend],
+      provider: fakeProvider({ state: "ok" }),
+      extraProviders: [device],
+      githubClientId: "Iv1.x",
+    });
+    await h.app.request(`/${OAUTH}/device/start`, { method: "POST" });
+
+    const first = await h.app.request(`/${OAUTH}/device/poll`, { method: "POST" });
+    expect(await first.json()).toEqual({ pending: true });
+    expect(backend.store.has(`cred.${OAUTH}`)).toBe(false);
+
+    const second = await h.app.request(`/${OAUTH}/device/poll`, { method: "POST" });
+    expect(await second.json()).toEqual({ status: "ok" });
+    expect(backend.store.get(`cred.${OAUTH}`)).toBe("gho_live"); // same storage path as PUT
+    const row = h.ctx.db.query("SELECT status FROM credentials_meta WHERE id=?").get(OAUTH) as {
+      status: string;
+    };
+    expect(row.status).toBe("ok");
+  });
+
+  it("poll does NOT store a token that validates invalid (parity with PUT)", async () => {
+    const backend = memBackend();
+    const device = fakeDeviceProvider([{ done: true, secret: "gho_bad" }], {
+      state: "invalid",
+      reason: "token rejected (401)",
+    });
+    const h = await setup({
+      backends: [backend],
+      provider: fakeProvider({ state: "ok" }),
+      extraProviders: [device],
+      githubClientId: "Iv1.x",
+    });
+    await h.app.request(`/${OAUTH}/device/start`, { method: "POST" });
+    const res = await h.app.request(`/${OAUTH}/device/poll`, { method: "POST" });
+    expect(await res.json()).toEqual({ status: "invalid" });
+    expect(backend.store.has(`cred.${OAUTH}`)).toBe(false); // nothing persisted
+  });
+
+  it("poll with no pending ceremony is 410", async () => {
+    const h = await setup({
+      backends: [memBackend()],
+      provider: fakeProvider({ state: "ok" }),
+      extraProviders: [fakeDeviceProvider([])],
+      githubClientId: "Iv1.x",
+    });
+    const res = await h.app.request(`/${OAUTH}/device/poll`, { method: "POST" });
+    expect(res.status).toBe(410);
+  });
+
+  it("device routes 400 for a provider without the DeviceFlowProvider port", async () => {
+    const h = await setup({ backends: [memBackend()], provider: fakeProvider({ state: "ok" }) });
+    const res = await h.app.request(`/${ID}/device/start`, { method: "POST" });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("credentials service — firstConfiguredTokenProvider (T12.2)", () => {
+  it("prefers the first configured id, falls back to the next, throws NotFound when neither", async () => {
+    const h = await setup({ backends: [memBackend()], provider: fakeProvider({ state: "ok" }) });
+    const read = h.cred.firstConfiguredTokenProvider([
+      "github-oauth:default",
+      "github-pat:default",
+    ]);
+    await expect(read()).rejects.toMatchObject({ code: "not_found" });
+
+    await h.ctx.secrets.set("cred.github-pat:default", "pat_token");
+    expect(await read()).toBe("pat_token"); // falls back to the PAT
+
+    await h.ctx.secrets.set("cred.github-oauth:default", "device_token");
+    expect(await read()).toBe("device_token"); // device wins when both exist
+  });
+
+  it("propagates SecretsLockedError instead of reporting NotFound", async () => {
+    const backend = memBackend();
+    const h = await setup({ backends: [backend], provider: fakeProvider({ state: "ok" }) });
+    backend.lock();
+    const read = h.cred.firstConfiguredTokenProvider([
+      "github-oauth:default",
+      "github-pat:default",
+    ]);
+    await expect(read()).rejects.toBeInstanceOf(SecretsLockedError);
   });
 });
 

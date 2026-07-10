@@ -17,6 +17,7 @@ import { createMasterKeyFileBackend } from "./services/auth/masterkey";
 import { createAuthService, SESSION_COOKIE } from "./services/auth/service";
 import { createSessionStore } from "./services/auth/session";
 import type { WebAuthnLib } from "./services/auth/webauthn";
+import { githubDeviceProvider } from "./services/credentials/providers/github-device";
 import { githubPatProvider } from "./services/credentials/providers/github-pat";
 import { createCredentialsService } from "./services/credentials/service";
 import { createDataService } from "./services/data/service";
@@ -67,14 +68,17 @@ export function buildApp(
         keyProvider: () => (master.key ? new Uint8Array(master.key) : null),
       }),
     ],
-    providers: [githubPatProvider()],
+    providers: [githubPatProvider(), githubDeviceProvider()],
   });
 
   // The one GitHub door. The token comes from the credentials service per request
-  // (rotation-safe); before a valid token is stored, every sync fails into the
-  // stale-serve path with a notification.
+  // (rotation-safe); a device-flow token wins over a pasted PAT when both exist (ADR 0018).
+  // Before any valid token is stored, every sync fails into the stale-serve path.
   const gh = createGitHubClient({
-    tokenProvider: credentials.tokenProvider("github-pat:default"),
+    tokenProvider: credentials.firstConfiguredTokenProvider([
+      "github-oauth:default",
+      "github-pat:default",
+    ]),
     log: log.child("github"),
   });
   // Access (E4): sessions live here so the gate middleware and the auth service

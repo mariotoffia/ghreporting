@@ -194,11 +194,32 @@ Redesigned on E8.7: the Copilot Spend report is a single importable Report Defin
 | T11.2 | Benchmarks | [details](IMPLEMENTATION_PLAN_DETAILS.md#t112-benchmarks) | T2.4, T9.1 | ⬜ |
 | T11.3 | Playwright e2e smoke | [details](IMPLEMENTATION_PLAN_DETAILS.md#t113-e2e-smoke) | T6.2, T7.3, T8.1 | ⬜ |
 
+### E12 — GitHub sign-in (no pasted token)
+
+Today a GitHub PAT reaches the store only via a raw `PUT /api/credentials/:id` — there is
+no UI, and unconfigured credential *types* are invisible (the list is meta rows only).
+E12 closes both gaps: a **provider-driven Settings panel** that renders whatever a
+Credential Provider declares and writes the secret through the selected Secret Store
+backend (T12.1, generic — proven on `github-pat`), then a **GitHub OAuth Device Flow**
+provider so a user signs in with an 8-char code instead of minting a token (T12.2/T12.3).
+Device Flow is the only GitHub auth that ships in a public binary without embedding a
+client *secret* — see [ADR 0018](docs/adr/0018-github-device-flow.md).
+
+| ID | Task | Details | Depends | Status |
+|----|------|---------|---------|--------|
+| T12.1 | Provider enumeration + provider-driven credential Settings UI (`fields` entry, github-pat) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t121-provider-driven-credential-entry-ui) | T3.4, T6.4 | ✅ |
+| T12.2 | `DeviceFlowProvider` port + `github-device` provider + device ceremony routes + ADR 0018 | [details](IMPLEMENTATION_PLAN_DETAILS.md#t122-github-device-flow-credential-provider) | T3.4 | ✅ |
+| T12.3 | Device-flow sign-in UI ("Connect GitHub": code, verification link, poll) | [details](IMPLEMENTATION_PLAN_DETAILS.md#t123-device-flow-sign-in-ui) | T12.1, T12.2 | ✅ |
+
 ## Suggested order
 
 T1.1→T1.5 · T2.1→T2.2 · T5.1 · T3.1→T3.4 · T2.3→T2.4 · T4.1→T4.2 · T5.2 ·
 T2.5a→e · T2.6 · T6.1→T6.4 · T7.1→T7.3 · T8.1→T8.2 · T8.5.1→T8.5.4 · T8.6.1→T8.6.5 ·
-T9.1→T9.2 · T11.1→T11.3 · T10.1→T10.2 · (T7.4 whenever).
+T9.1→T9.2 · T11.1→T11.3 · T10.1→T10.2 · T12.1→T12.3 · (T7.4 whenever).
+
+E12 is independent of E10/E11: T12.1 needs only the credentials service (T3.4) and the
+UI shell (T6.4); T12.2 is backend-only; T12.3 joins them. Ship E12 whenever the pasted-PAT
+UX becomes the friction — it does not gate packaging.
 
 E8.5 depends only on T8.1 (ChartHost) + the premium-requests datasets — not on the
 Univer sheet path (E7) or the bidirectional link (T8.2): report panels render as HTML

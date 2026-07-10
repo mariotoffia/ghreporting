@@ -16,6 +16,7 @@ export interface AppConfig {
   org?: string;
   origins: string[]; // WebAuthn + CORS allow-list (dev :5173, packaged :8787)
   secretBackend?: string; // "keychain" | "encrypted-file" override
+  githubClientId?: string; // public OAuth App client id for Device Flow (ADR 0018); no secret
   packaged: boolean; // true inside the compiled binary
   scheduler: boolean; // background refresh (T2.6): packaged || GHR_SCHEDULER=1
   now(): Date; // the ONLY clock services may read (TESTS.md §2.2)

@@ -2302,3 +2302,205 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
 
 **Done when** `make test-e2e` green headless.
 **Refs** TESTS.md §1, ADR 0007.
+
+---
+
+## E12 GitHub sign-in (no pasted token)
+
+Context: the `credentials` service (E3) already stores a validated GitHub token in the
+Secret Store and hands it to the one `GitHubClient` via `tokenProvider("github-pat:default")`.
+What is missing is (a) any **UI** to put a token there — today it takes a raw
+`PUT /api/credentials/github-pat:default` from DevTools — and (b) a way to obtain a token
+**without a human minting a PAT**. E12 adds a generic, provider-driven Settings panel
+(T12.1) and a GitHub **OAuth Device Flow** provider (T12.2/T12.3). Nothing downstream of
+the Secret Store changes: every path still just reads a bearer token.
+
+Why Device Flow and not the OAuth web flow or a GitHub App: both require a client
+**secret** / private **key** at the token-exchange step, and this app ships as a public
+binary every user downloads — an embedded secret is not a secret. The Device Flow is the
+OAuth grant designed for exactly this (public/native clients): only the *public*
+`client_id` is embedded, there is no callback server, and the user authorizes out-of-band
+by typing a short code at `github.com/login/device`. Recorded as ADR 0018.
+
+### T12.1 Provider-driven credential entry UI
+
+**Goal** A Settings panel that lists every registered Credential Provider, shows each
+one's status, and lets the user set/replace its secret through the selected Secret Store
+backend — driven entirely by what the provider's `describe()` declares (so a new provider
+needs no UI code). Proven end-to-end on `github-pat`.
+
+**Files**
+- `apps/server/src/services/credentials/service.ts` — change `GET /` to enumerate
+  *registered providers* (not just `credentials_meta` rows), each joined with its current
+  status; add a `credentialsConformance`-friendly return shape. (~30 lines; the file is
+  under 500 — check `wc -l` and split `routes()` into a `routes.ts` sibling if it crosses.)
+- `apps/web/src/features/settings/CredentialsPanel.tsx` + `.test.tsx` — the panel.
+- `apps/web/src/features/settings/api.ts` + `.test.ts` — typed calls.
+- Wire a Settings entry into the app shell nav (`apps/web/src/App.tsx` or the shell
+  component that owns routing) behind the session gate.
+
+**Produces**
+- **Enumeration.** `GET /api/credentials` returns one entry per *registered provider*,
+  each shaped:
+  ```ts
+  { id: `${type}:default`, type, describe: CredentialTypeMeta,
+    status: "ok" | "expiring" | "invalid" | null,   // null = not configured yet
+    expiresAt: string | null, statusDetail: string | null }
+  ```
+  Merge: start from `providers.values().map(describe)`, left-join the
+  `credentials_meta` row for `${type}:default` (single default instance per type — the
+  convention already used by `github-pat:default`). This is the fix for the real gap:
+  today an *unconfigured* type is invisible because the list is meta rows only.
+- **Panel.** For each entry: a status badge (`ok`/`expiring`/`invalid`/`not configured`),
+  the `describe().title` + `helpUrl` link, and — for `flow: "fields"` providers (see
+  T12.2 for the discriminator; default is `"fields"`) — a form built from
+  `describe().fields` (a `secret: true` field renders `type="password"`). Submit →
+  `PUT /api/credentials/:id` `{ secret }`; a `400 credential.invalid` surfaces the
+  server's reason inline. A "Remove" action → `DELETE /api/credentials/:id`. A
+  "Re-check" action → `POST /api/credentials/:id/validate`.
+- **api.ts.** `listCredentials()`, `putCredential(id, secret)`, `deleteCredential(id)`,
+  `validateCredential(id)` over the shared `makeApi` wrapper — secrets ride the request
+  body only, never a query string or log.
+
+**Tests**
+- Service: `GET /` lists a registered-but-unconfigured provider with `status: null`, and a
+  configured one with its real status; secret material never appears in the response.
+- Panel (happy-dom, per ADR 0015 style): given a fake `listCredentials` returning a
+  `fields` provider, the form renders one password input; submitting calls `putCredential`
+  with the typed value; an `invalid` response shows the reason. No real network.
+
+**Done when** From the browser, Settings shows "GitHub Personal Access Token — not
+configured", pasting a valid PAT flips it to "ok" and a subsequent sync succeeds; `make
+lint && make vet && make test` green.
+**Refs** ADR 0006, PLUGIN.md §Credential Providers, ARCHITECTURE.md §6–7, UBIQUITOUS.md
+§Credentials.
+
+### T12.2 GitHub device-flow credential provider
+
+**Goal** Obtain a GitHub token by OAuth Device Flow and store it in the same Secret Store,
+so the user signs in with a code instead of minting a PAT — without embedding any client
+secret. Keep the `CredentialProvider` interface unchanged: device capability is an
+**optional secondary port** a provider may also implement (interface segregation — a
+plugin implements only the port it needs).
+
+**Files**
+- `apps/server/src/services/credentials/ports.ts` — add the `flow` discriminator to
+  `CredentialTypeMeta` and the new `DeviceFlowProvider` port (below).
+- `apps/server/src/services/credentials/providers/github-device.ts` + `.test.ts`.
+- `apps/server/src/services/credentials/service.ts` — the two ceremony routes + an
+  in-memory pending map + a `firstConfiguredTokenProvider` helper.
+- `apps/server/src/kernel/config.ts` + `ports.ts` + `config.test.ts` — `githubClientId`.
+- `apps/server/src/index.ts` — resolve the GitHub token across both providers.
+- `docs/adr/0018-github-device-flow.md`; update `PLUGIN.md` (+ `github-oauth` row and the
+  `DeviceFlowProvider` port), `UBIQUITOUS.md` (add **Device Flow**, **Sign-in**).
+
+**Produces**
+- **Port additions** (small, additive — existing providers are untouched):
+  ```ts
+  // CredentialTypeMeta gains:
+  flow?: "fields" | "device";   // default "fields"; the UI picks the control
+  // New optional port; a provider MAY implement it in addition to CredentialProvider:
+  export interface DeviceFlowStart {
+    userCode: string; verificationUri: string; interval: number; expiresIn: number;
+  }
+  export interface DeviceFlowProvider {
+    startDevice(ctx: ServiceContext): Promise<DeviceFlowStart & { deviceCode: string }>;
+    // pending → { done:false }; authorized → { done:true, secret }; hard errors throw.
+    pollDevice(deviceCode: string, ctx: ServiceContext):
+      Promise<{ done: false } | { done: true; secret: string }>;
+  }
+  ```
+- **`github-oauth` provider** (`type: "github-oauth"`, `describe().flow = "device"`,
+  `fields: []`, `helpUrl: "https://github.com/login/device"`). It implements *both*
+  `CredentialProvider` and `DeviceFlowProvider`:
+  - `startDevice`: `POST https://github.com/login/device/code` (Accept: application/json)
+    with `client_id = ctx.config.githubClientId` and
+    `scope = "read:org manage_billing:copilot"`. If `githubClientId` is unset, throw
+    `AppError("credential.device_unconfigured", …, 500)` with a message naming
+    `GHR_GITHUB_CLIENT_ID`. Returns `{ deviceCode, userCode, verificationUri, interval,
+    expiresIn }` mapped from `device_code/user_code/verification_uri/interval/expires_in`.
+  - `pollDevice`: `POST https://github.com/login/oauth/access_token` with
+    `grant_type=urn:ietf:params:oauth:grant-type:device_code`, the `device_code`, and
+    `client_id`. Map `error: "authorization_pending" | "slow_down"` → `{ done:false }`
+    (slow_down means the UI should back off — see T12.3); `access_token` present →
+    `{ done:true, secret: access_token }`; `error: "expired_token" | "access_denied" |
+    "unsupported_grant_type"` → `throw ValidationError(error)`.
+  - `validate(secret, ctx)`: reuse the `github-pat` health check (`GET /user`,
+    `x-oauth-scopes`) — factor a shared `validateGithubToken(secret, ctx)` helper both
+    providers call, so scope/expiry logic lives once.
+- **Ceremony routes** (added to `routes()`, guarded so they 404/400 for providers that do
+  not implement `DeviceFlowProvider` — check with a small `isDeviceFlow(p)` type guard):
+  - `POST /:id/device/start` → `startDevice`, store `{ deviceCode, expiresAt }` in an
+    in-memory `pending: Map<id, …>` (dies with the process — device codes are short-lived
+    and single-user; **the `deviceCode` is never returned to the browser**), respond
+    `{ userCode, verificationUri, interval, expiresIn }`.
+  - `POST /:id/device/poll` → look up `pending[id]` (410 if absent/expired), call
+    `pollDevice(deviceCode)`. On `done` → `backend.set(account(id), secret)` +
+    `applyStatus(id, type, await validate(secret))` + drop the pending entry, respond
+    `{ status }`. Otherwise respond `{ pending: true }` (200). Reuses the exact storage
+    path T12.1's `PUT` uses — the token lands in keychain/encrypted-file identically.
+- **One GitHub door, two sources.** Add
+  `firstConfiguredTokenProvider(ids: string[]): () => Promise<string>` to the service — it
+  reads each `account(id)` in order and returns the first present secret, throwing
+  `NotFoundError` only if none is configured (and propagating `SecretsLockedError`).
+  `index.ts` switches to
+  `credentials.firstConfiguredTokenProvider(["github-oauth:default", "github-pat:default"])`
+  so either a device-flow token or a pasted PAT feeds the same `GitHubClient`, device flow
+  preferred when both exist. This keeps the two providers independent and small instead of
+  overloading one `type`.
+- **Config.** `githubClientId: env.GHR_GITHUB_CLIENT_ID` (optional). The `client_id` is
+  public; document that the maintainer registers one OAuth App on github.com (Developer
+  settings → OAuth Apps → **Enable Device Flow**) and ships its id — no secret. Provide a
+  sane committed default id only if one exists; otherwise leave unset and let the provider
+  surface the clear "device flow not configured" error.
+
+**Tests**
+- Provider (fake `fetchImpl`, per PLUGIN.md conformance style): `startDevice` maps the
+  device-code response; `pollDevice` returns `{done:false}` on `authorization_pending`
+  then `{done:true, secret}` on `access_token`; `expired_token`/`access_denied` throw; no
+  token appears in any thrown error message. `startDevice` with no `githubClientId` throws
+  the unconfigured error.
+- Service: `device/start` stores pending and does **not** leak `deviceCode`; `device/poll`
+  returns `{pending:true}` while pending, then stores the secret and reports `ok`;
+  `firstConfiguredTokenProvider` prefers `github-oauth:default`, falls back to
+  `github-pat:default`, throws `NotFoundError` when neither exists.
+- Add `github-oauth` to the shared credential-provider conformance run.
+
+**Done when** With `GHR_GITHUB_CLIENT_ID` set to a real Device-Flow OAuth App, `POST
+…/device/start` returns a code, entering it at github.com and calling `…/device/poll`
+stores a working token and a sync succeeds; `make lint && make vet && make test` green;
+ADR 0018 committed; PLUGIN.md/UBIQUITOUS.md updated.
+**Refs** ADR 0006, ADR 0018, PLUGIN.md, UBIQUITOUS.md, GitHub docs "Authorizing OAuth
+apps → Device Flow".
+
+### T12.3 Device-flow sign-in UI
+
+**Goal** A "Connect GitHub" experience in the Settings panel for `flow: "device"`
+providers: start the ceremony, show the user code + verification link, and poll to
+completion — no token ever typed.
+
+**Files** `apps/web/src/features/settings/CredentialsPanel.tsx` (extend) + a
+`DeviceFlow.tsx` sub-component + `.test.tsx`; extend `settings/api.ts` with
+`startDevice(id)` / `pollDevice(id)`.
+
+**Produces**
+- For a `flow: "device"` entry, render a **Connect GitHub** button instead of a secret
+  form. On click → `POST /:id/device/start`; show the returned `userCode` large and
+  copyable, a link/button opening `verificationUri` in a new tab, and a "waiting for
+  authorization…" spinner.
+- Poll `POST /:id/device/poll` every `interval` seconds (respect a `slow_down` by
+  lengthening the interval; stop at `expiresIn` with a "code expired — try again" state).
+  On `{ status: "ok" }` stop polling and refresh the badge to configured. Polling uses a
+  cancelable timer that `afterEach`/unmount clears (TESTS.md anti-flake: no bare sleeps —
+  the test injects a fake timer + fake api).
+- Re-connect path: an already-configured device credential still offers "Reconnect"
+  (re-runs the ceremony, overwrites the stored token).
+
+**Tests** Component with injected fake api + fake timer: start returns a code → code and
+verification link render; poll returns `{pending:true}` once then `{status:"ok"}` → the
+badge flips to configured and the timer is cleared. No real network, no real time.
+
+**Done when** In the browser, "Connect GitHub" shows a code, authorizing at
+github.com/login/device flips Settings to "ok", and a sync works — with only
+`GHR_GITHUB_CLIENT_ID` configured and no token ever pasted; `make test` green.
+**Refs** ADR 0018, ARCHITECTURE.md §7, TESTS.md §2.

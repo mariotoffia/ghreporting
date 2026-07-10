@@ -23,6 +23,9 @@ const Reports = lazy(() =>
 const QueryDatasets = lazy(() =>
   import("./features/query-datasets/Editor").then((m) => ({ default: m.Editor })),
 );
+const Settings = lazy(() =>
+  import("./features/settings/CredentialsPanel").then((m) => ({ default: m.CredentialsPanel })),
+);
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -34,6 +37,7 @@ const TABS: { view: Exclude<View, "login">; label: string; component: ComponentT
   { view: "workbench", label: "Workbench", component: Workbench },
   { view: "reports", label: "Reports", component: Reports },
   { view: "query-datasets", label: "Query datasets", component: QueryDatasets },
+  { view: "settings", label: "Settings", component: Settings },
 ];
 
 /** Bridges the single SSE stream to query invalidations for the whole app. */

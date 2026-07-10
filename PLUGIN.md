@@ -8,7 +8,7 @@ Interfaces here are the canonical signatures — implementation tasks copy them 
 |--------|------|----------|---------------------------|
 | Dataset connector | `DatasetConnector` | `data` service | `premium-requests`, `copilot-metrics`, `copilot-seats`, `billing-usage`, `org-people` |
 | Secret store backend | `SecretStoreBackend` | `credentials` service | `keychain` (macOS), `encrypted-file` |
-| Credential provider | `CredentialProvider` | `credentials` service | `github-pat` |
+| Credential provider | `CredentialProvider` (+ optional `DeviceFlowProvider`) | `credentials` service | `github-pat`, `github-oauth` |
 
 ## Dataset Connectors
 
@@ -139,6 +139,7 @@ export interface CredentialTypeMeta {
   helpUrl: string;                     // where a human creates one
   fields: CredentialFieldSpec[];       // what the UI must collect
   requiredScopes: string[];            // documented, also checked by validate()
+  flow?: "fields" | "device";          // default "fields"; the Settings UI picks the control
 }
 
 export type CredentialStatus =
@@ -152,14 +153,36 @@ export interface CredentialProvider {
   /** Server-side check against the real API. Cheap; called at save + every 6h. */
   validate(secret: string, ctx: ServiceContext): Promise<CredentialStatus>;
 }
+
+// Optional SECONDARY port (ADR 0018): a provider MAY also implement it to obtain its
+// secret by OAuth Device Flow instead of a typed field. Interface segregation — github-pat
+// does not implement it; github-oauth does. The `deviceCode` stays server-side (the
+// credentials service holds it in an in-memory pending map, never returns it to the browser).
+export interface DeviceFlowStart {
+  userCode: string; verificationUri: string; interval: number; expiresIn: number;
+}
+export interface DeviceFlowProvider {
+  startDevice(ctx: ServiceContext): Promise<DeviceFlowStart & { deviceCode: string }>;
+  pollDevice(deviceCode: string, ctx: ServiceContext):
+    Promise<{ done: false } | { done: true; secret: string }>;
+}
 ```
 
-The `github-pat` reference: validates via `GET /user` (+ `GET /rate_limit` sanity),
-reads classic scopes from the `x-oauth-scopes` response header and expiry from
-`github-authentication-token-expiration`; `expiring` when < 7 days remain. On
-`expiring`/`invalid` the credentials service emits the matching `AppEvent` and a
-notification with key `credential.<id>.<state>` — this is the "please rotate your
-token" flow.
+The `github-pat` reference (`flow: "fields"`): validates via `GET /user`, reads classic
+scopes from the `x-oauth-scopes` response header and expiry from
+`github-authentication-token-expiration`; `expiring` when < 7 days remain. The `github-oauth`
+reference (`flow: "device"`, `fields: []`) implements *both* ports: it signs the user in by
+OAuth Device Flow (`startDevice`/`pollDevice`, only the public `GHR_GITHUB_CLIENT_ID` embedded)
+and stores the resulting token in the same Secret Store. Both share one `validateGithubToken`
+helper, so scope/expiry logic lives once. On `expiring`/`invalid` the credentials service emits
+the matching `AppEvent` and a notification with key `credential.<id>.<state>` — the "please
+rotate your token" flow.
+
+The service reads the GitHub token from the first configured of
+`["github-oauth:default", "github-pat:default"]` (`firstConfiguredTokenProvider`), so a
+device-flow token or a pasted PAT feeds the one `GitHubClient` interchangeably; device flow
+wins when both exist. Device ceremony routes: `POST /:id/device/start`, `POST /:id/device/poll`
+(both 400 for a provider without `DeviceFlowProvider`; poll 410s once the code expires).
 
 Conformance: `credentialProviderConformance(type, factory, fakeFetchScenarios)` —
 ok/expiring/invalid mapping, no secret material in thrown errors or logs.

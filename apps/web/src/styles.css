@@ -231,3 +231,65 @@ button:disabled {
   font-size: 0.75rem;
   padding: 0.15rem 0.5rem;
 }
+
+/* Settings → Credentials (T12.1/T12.3). Minimal, matches the shell's flat look. */
+.settings {
+  padding: 1rem;
+}
+.cred-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.cred-title {
+  font-weight: 600;
+  color: var(--info);
+}
+.cred-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted, #6b7280);
+}
+.cred-ok {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.cred-expiring {
+  background: #fffbeb;
+  color: var(--warning);
+  border-color: #fde68a;
+}
+.cred-invalid {
+  background: #fef2f2;
+  color: var(--error);
+  border-color: #fecaca;
+}
+.cred-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.device-flow {
+  margin-top: 0.6rem;
+}
+.device-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+}
+.device-spinner {
+  color: var(--muted, #6b7280);
+}
