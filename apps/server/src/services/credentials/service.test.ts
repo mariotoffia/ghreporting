@@ -543,6 +543,26 @@ describe("credentials service — firstConfiguredTokenProvider (T12.2)", () => {
   });
 });
 
+describe("credentials service — configuredTokensProvider (token fallback, ADR 0018)", () => {
+  it("returns every configured token in order, skipping unconfigured, empty when none", async () => {
+    const h = await setup({ backends: [memBackend()], provider: fakeProvider({ state: "ok" }) });
+    const read = h.cred.configuredTokensProvider(["github-pat:default", "github-oauth:default"]);
+    expect(await read()).toEqual([]); // none configured yet
+    await h.ctx.secrets.set("cred.github-oauth:default", "device_token");
+    expect(await read()).toEqual(["device_token"]); // skips the unconfigured PAT
+    await h.ctx.secrets.set("cred.github-pat:default", "pat_token");
+    expect(await read()).toEqual(["pat_token", "device_token"]); // PAT first (priority order)
+  });
+
+  it("propagates SecretsLockedError", async () => {
+    const backend = memBackend();
+    const h = await setup({ backends: [backend], provider: fakeProvider({ state: "ok" }) });
+    backend.lock();
+    const read = h.cred.configuredTokensProvider(["github-pat:default", "github-oauth:default"]);
+    await expect(read()).rejects.toBeInstanceOf(SecretsLockedError);
+  });
+});
+
 describe("credentials service — end-to-end with GitHubClient (Done-when)", () => {
   it("authorizes GitHub requests with the token the service stored", async () => {
     const backend = memBackend();

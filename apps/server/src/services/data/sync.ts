@@ -64,7 +64,15 @@ export async function syncGaps(
   q: DatasetQuery,
   ctx: ServiceContext,
   gh: GitHubClient,
+  opts?: { force?: boolean },
 ): Promise<{ stale: boolean }> {
+  // Force (explicit "Sync now"): drop this scope's watermark first, so coverage() reports the
+  // whole range as a gap and we re-fetch — even a range that already looks "covered" but landed
+  // 0 rows (e.g. a prior sync that hit a 404 the connector swallowed). Incremental callers
+  // (queryDataset, scheduler) never force, so normal gap-filling is unchanged.
+  if (opts?.force && q.org) {
+    ctx.db.query("DELETE FROM sync_state WHERE dataset=?1 AND scope=?2").run(c.meta.id, q.org);
+  }
   for (const gap of c.coverage(ctx.db, q)) {
     markSyncing(ctx.db, c.meta.id, gap);
     ctx.bus.emit({ type: "sync.started", dataset: c.meta.id, scope: gap.scope });

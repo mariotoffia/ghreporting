@@ -99,6 +99,57 @@ describe("createGitHubClient", () => {
     await expect(makeClient(impl).download("https://signed.example.com/x")).rejects.toThrow("403");
   });
 
+  it("falls back to the next token on a 401/403 (complementary PAT + device tokens)", async () => {
+    const { impl, calls } = fakeFetch([
+      json({ message: "Resource not accessible by personal access token" }, {}, 403), // PAT
+      json({ ok: true }), // device token
+    ]);
+    const gh = createGitHubClient({
+      tokens: async () => ["pat", "device"],
+      fetchImpl: impl,
+      log: recordingLogger(),
+    });
+    const res = await gh.get<{ ok: boolean }>("/orgs/{org}/copilot/metrics", { org: "acme" });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.headers.get("authorization")).toBe("token pat"); // tried first
+    expect(calls[1]?.headers.get("authorization")).toBe("token device"); // fell back
+  });
+
+  it("does not fall back on a non-auth error (404) — that's a real answer", async () => {
+    const { impl, calls } = fakeFetch([json({ message: "Not Found" }, {}, 404)]);
+    const gh = createGitHubClient({
+      tokens: async () => ["pat", "device"],
+      fetchImpl: impl,
+      log: recordingLogger(),
+    });
+    await expect(gh.get("/x", {})).rejects.toThrow();
+    expect(calls).toHaveLength(1); // no retry with the second token
+  });
+
+  it("throws the last error when every token is forbidden", async () => {
+    const { impl } = fakeFetch([
+      json({ message: "no" }, {}, 403),
+      json({ message: "no" }, {}, 403),
+    ]);
+    const gh = createGitHubClient({
+      tokens: async () => ["a", "b"],
+      fetchImpl: impl,
+      log: recordingLogger(),
+    });
+    await expect(gh.get("/x", {})).rejects.toThrow();
+  });
+
+  it("throws a clear error when no credential is configured", async () => {
+    const { impl } = fakeFetch([]);
+    const gh = createGitHubClient({
+      tokens: async () => [],
+      fetchImpl: impl,
+      log: recordingLogger(),
+    });
+    await expect(gh.get("/x", {})).rejects.toThrow(/no GitHub credential/);
+  });
+
   it("logs and retries once when rate limited", async () => {
     // reset in the PAST: the retry path is identical but octokit's throttle
     // sleeps until the reset time — a future value is a hidden real sleep

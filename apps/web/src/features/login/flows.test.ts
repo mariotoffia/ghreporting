@@ -25,14 +25,18 @@ function fakeApi(posts: unknown[]) {
 
 describe("nextScreen", () => {
   it("routes an unregistered device to setup", () => {
-    expect(nextScreen({ registered: false, unlocked: false })).toBe("setup");
-    expect(nextScreen({ registered: false, unlocked: true })).toBe("setup");
+    expect(nextScreen({ registered: false, unlocked: false, hasSession: false })).toBe("setup");
+    expect(nextScreen({ registered: false, unlocked: true, hasSession: false })).toBe("setup");
   });
-  it("routes a registered but locked device to login", () => {
-    expect(nextScreen({ registered: true, unlocked: false })).toBe("login");
+  it("routes a registered but session-less device to login", () => {
+    expect(nextScreen({ registered: true, unlocked: false, hasSession: false })).toBe("login");
   });
-  it("routes a registered + unlocked device to the app", () => {
-    expect(nextScreen({ registered: true, unlocked: true })).toBe("app");
+  it("routes a registered + session device to the app", () => {
+    expect(nextScreen({ registered: true, unlocked: true, hasSession: true })).toBe("app");
+  });
+  it("routes to login when the server is unlocked but THIS browser has no session (the 401-loop bug)", () => {
+    // Server-global unlock must not put a session-less browser into the app — it would 401 forever.
+    expect(nextScreen({ registered: true, unlocked: true, hasSession: false })).toBe("login");
   });
 });
 

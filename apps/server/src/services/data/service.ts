@@ -15,8 +15,11 @@ import { type SchedulerTimers, startScheduler } from "./scheduler";
 import { readSyncState, syncGaps } from "./sync";
 
 const MAX_LIMIT = 1000;
-// the scheduler keeps a trailing window warm; 28 days covers every dataset TTL
-const REFRESH_WINDOW_DAYS = 27;
+// Background scheduler backfill floor: at least ~5 months, because this app may be run only
+// every few months (not daily). Each tick extends further back to the last watermark if the
+// gap is longer, so a months-long absence fully backfills; coverage() then fetches only the
+// missing days within that window, so a regularly-run app still does little work.
+const REFRESH_WINDOW_DAYS = 153; // ≈ 5 months
 
 function builtinConnectors(now: () => Date): DatasetConnector[] {
   return [
@@ -59,6 +62,17 @@ export function createDataService(opts: {
   function registerConnector(c: DatasetConnector): void {
     if (connectors.has(c.meta.id)) throw new AppError("connector.duplicate", c.meta.id, 409);
     connectors.set(c.meta.id, c);
+  }
+
+  /**
+   * The org scope the Explorer prefills and the scheduler syncs. Persisted in app_config so
+   * it survives restarts (the user need not re-enter it); GHR_ORG is the initial fallback.
+   */
+  function currentOrg(): string | null {
+    const row = ctx.db.query("SELECT org FROM app_config WHERE id=1").get() as
+      | { org: string | null }
+      | undefined;
+    return row?.org ?? ctx.config.org ?? null;
   }
 
   /** Read a query-dataset row by id from the read-write handle (reading it is safe there). */
@@ -143,11 +157,10 @@ export function createDataService(opts: {
       // tests pass their own connectors; production registers the built-ins
       const list = opts.connectors ?? builtinConnectors(() => ctx.config.now());
       for (const con of list) registerConnector(con);
-      if (ctx.config.scheduler && !ctx.config.org) {
-        ctx.log.info("scheduler disabled: GHR_ORG unset (a scheduled sync needs a scope)");
-      }
-      if (ctx.config.scheduler && ctx.config.org) {
-        const org = ctx.config.org;
+      if (ctx.config.scheduler) {
+        // Start unconditionally when scheduling is on: the scope is the *persisted* org
+        // (currentOrg), which the user may set from the Explorer after startup — a tick with
+        // no org yet simply no-ops, and picks up automatically once an org is saved.
         let unlocked = false;
         unsubscribeUnlock = ctx.bus.on("auth.unlocked", () => {
           unlocked = true;
@@ -156,9 +169,15 @@ export function createDataService(opts: {
           ctx,
           connectors: () => [...connectors.values()],
           sync: async (id) => {
+            const org = currentOrg();
+            if (!org) return; // no scope configured yet — nothing to sync
             const today = ctx.config.now().toISOString().slice(0, 10);
-            const range = { from: addDays(today, -REFRESH_WINDOW_DAYS), to: today };
-            await syncGaps(connector(id), { org, range }, ctx, opts.gh);
+            const floor = addDays(today, -REFRESH_WINDOW_DAYS); // at least ~5 months back
+            // Extend to the last watermark when the app hasn't run in longer than the floor, so
+            // a months-long gap fully backfills instead of leaving a hole before the window.
+            const wm = readSyncState(ctx.db, id).find((r) => r.scope === org)?.synced_to;
+            const from = wm && wm < floor ? wm : floor;
+            await syncGaps(connector(id), { org, range: { from, to: today } }, ctx, opts.gh);
           },
           unlocked: () => unlocked,
           ...opts.schedulerControls,
@@ -170,8 +189,17 @@ export function createDataService(opts: {
       unsubscribeUnlock?.();
     },
     routes(app) {
-      // The explorer prefills its org input from the configured scope (GHR_ORG).
-      app.get("/config", (c) => c.json({ org: ctx.config.org ?? null }));
+      // The explorer prefills its org input from the persisted scope (or GHR_ORG initially),
+      // and saves it back with PUT so it survives restarts and feeds the background scheduler.
+      app.get("/config", (c) => c.json({ org: currentOrg() }));
+      app.put("/config", async (c) => {
+        const body = (await c.req.json().catch(() => {
+          throw new ValidationError("body must be JSON");
+        })) as { org?: unknown };
+        const org = typeof body.org === "string" && body.org.trim() !== "" ? body.org.trim() : null;
+        ctx.db.query("UPDATE app_config SET org=?1 WHERE id=1").run(org);
+        return c.json({ org: currentOrg() });
+      });
 
       // Table → column names, for the query-dataset SQL editor's schema-aware autocomplete
       // (ADR 0016). Read-only introspection of the user's own DB; internal bookkeeping tables
@@ -198,15 +226,18 @@ export function createDataService(opts: {
       app.get("/datasets", (c) => {
         const builtins = [...connectors.values()].map((con) => ({
           ...con.meta,
+          readonly: false, // syncs from GitHub — the Explorer offers "Sync now"
           coverage: readSyncState(ctx.db, con.meta.id),
         }));
         // Query datasets (ADR 0016) sit beside built-ins so the report designer picker lists
-        // them with no change. They never sync, so coverage is always [].
+        // them with no change. They never sync (derived SQL) — `readonly` tells the Explorer to
+        // hide sync actions and show "computed", not a misleading "never synced".
         const queryDatasets = opts.roDb
           ? (
               ctx.db.query("SELECT * FROM query_datasets ORDER BY title").all() as QueryDatasetRow[]
             ).map((row) => ({
               ...queryDatasetConnector(row, opts.roDb as Database).meta,
+              readonly: true,
               coverage: [],
             }))
           : [];
@@ -225,11 +256,19 @@ export function createDataService(opts: {
       app.post("/sync", async (c) => {
         const body = (await c.req.json().catch(() => {
           throw new ValidationError("body must be JSON");
-        })) as { dataset?: string; org?: string; range?: { from: string; to: string } };
+        })) as {
+          dataset?: string;
+          org?: string;
+          range?: { from: string; to: string };
+          force?: boolean;
+        };
         if (typeof body.dataset !== "string") throw new ValidationError("dataset is required");
         const today = ctx.config.now().toISOString().slice(0, 10);
         const q = parseQuery({ org: body.org, range: body.range ?? { from: today, to: today } });
-        const { stale } = await syncGaps(connector(body.dataset), q, ctx, opts.gh);
+        // force: an explicit user "Sync now" re-fetches even an already-covered range.
+        const { stale } = await syncGaps(connector(body.dataset), q, ctx, opts.gh, {
+          force: body.force === true,
+        });
         return c.json({ synced: !stale, stale });
       });
 

@@ -15,22 +15,31 @@ const marioSeat = {
 
 const fixtures = {
   gets: { "/orgs/acme": { id: 1, login: "acme", name: "Acme Inc" } },
+  // Real GitHub shape: each page is a wrapped { total_seats, seats:[] } object (octokit does
+  // NOT flatten it), NOT a bare array. Using the real shape here reproduces the production
+  // "TypeError: {} is not iterable" the connector's unwrap fixes — a bare-array fixture hid it.
   pages: {
     "/orgs/acme/copilot/billing/seats": [
-      [
-        marioSeat,
-        { assignee: null, created_at: "2025-01-01T00:00:00Z" }, // unassigned seat: skipped
-      ],
-      [
-        {
-          assignee: { id: 8, login: "anna" },
-          created_at: "2025-02-01T00:00:00Z",
-          last_activity_at: null,
-          last_activity_editor: null,
-          plan_type: "business",
-          pending_cancellation_date: "2026-08-01",
-        },
-      ],
+      {
+        total_seats: 2,
+        seats: [
+          marioSeat,
+          { assignee: null, created_at: "2025-01-01T00:00:00Z" }, // unassigned seat: skipped
+        ],
+      },
+      {
+        total_seats: 2,
+        seats: [
+          {
+            assignee: { id: 8, login: "anna" },
+            created_at: "2025-02-01T00:00:00Z",
+            last_activity_at: null,
+            last_activity_editor: null,
+            plan_type: "business",
+            pending_cancellation_date: "2026-08-01",
+          },
+        ],
+      },
     ],
   },
 };
@@ -81,7 +90,7 @@ describe("copilot-seats connector", () => {
     await syncOnce();
     expect((ctx.db.query("SELECT COUNT(*) n FROM copilot_seats").get() as { n: number }).n).toBe(2);
     const smaller = structuredClone(fixtures);
-    smaller.pages["/orgs/acme/copilot/billing/seats"] = [[marioSeat]];
+    smaller.pages["/orgs/acme/copilot/billing/seats"] = [{ total_seats: 1, seats: [marioSeat] }];
     await syncOnce(smaller);
     const rs = connector().select(ctx.db, q);
     expect(rs.rows.map((r) => r[0])).toEqual(["mario"]);

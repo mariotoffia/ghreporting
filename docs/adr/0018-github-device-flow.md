@@ -36,10 +36,15 @@ the web flow and the GitHub App for the distributed case.
 - The `credentials` service exposes two ceremony routes (`/:id/device/start`,
   `/:id/device/poll`) and holds pending device codes in memory only; the `device_code`
   never reaches the browser.
-- The one `GitHubClient` reads the first configured of
-  `["github-oauth:default", "github-pat:default"]`, so a device-flow token or a pasted PAT
-  feeds it interchangeably. PAT entry stays as a supported fallback (air-gapped setups,
-  fine-grained tokens, CI).
+- The two credentials are **complementary**, and the one `GitHubClient` uses **both with
+  fallback**: it reads all configured of `["github-pat:default", "github-oauth:default"]` and,
+  per request, tries the PAT first and falls back to the device token on a **401/403**. A
+  fine-grained PAT reads the enhanced billing platform but not Copilot; a device-flow token
+  reads Copilot but not billing (see Consequences). Fallback means each endpoint uses whichever
+  token can access it — billing via the PAT, Copilot metrics via the device token — instead of
+  forcing one token to cover everything. With only one credential configured, that one is used
+  (its 403s surface normally). Device flow stays the zero-setup default; the PAT is added when
+  spend reporting is needed.
 
 ## Consequences
 
@@ -51,6 +56,15 @@ the web flow and the GitHub App for the distributed case.
   per-installation one. Acceptable for a single-user local tool; revisit only if scale or
   fine-grained org permissions demand a GitHub App (which reintroduces the
   key-distribution problem).
+- **Billing is out of reach for the Device Flow token.** The enhanced billing-platform
+  endpoints (`/organizations/{org}/settings/billing/usage` and `.../premium_request/usage`,
+  which the `billing-usage` and `premium-requests` connectors need) require a **fine-grained**
+  token with org **"Administration: read"**. Classic OAuth scopes (`read:org`,
+  `manage_billing:copilot`) return **404** there — even for an org owner. So Device Flow
+  covers `copilot-metrics`/`copilot-seats` (which it can read) but **not** premium-request
+  spend; that requires the user to paste a fine-grained PAT (Administration: read, plus
+  Copilot read), which precedence then prefers. The connectors treat 404 as "no data", so a
+  missing-permission org silently shows empty spend datasets — documented here as the cause.
 - Org SAML SSO: the resulting token must be SSO-authorized — identical to PATs today.
 - A `slow_down`/`expired_token` handshake must be handled in the poll loop.
 

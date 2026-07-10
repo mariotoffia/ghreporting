@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/client";
 import { useUi } from "../../state/ui";
-import { type CatalogEntry, formatCoverage, lastNDays } from "./format";
+import { type CatalogEntry, coverageForOrg, formatCoverage, lastNDays } from "./format";
 import { Preview, type ResultSet } from "./Preview";
 
 const DATASETS_KEY = ["datasets"] as const;
@@ -36,9 +36,36 @@ export function Explorer() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ dataset: string; result: ResultSet } | null>(null);
   const trimmedOrg = org.trim();
+  // A real window so date-ranged datasets (metrics, billing, premium-requests) actually fill —
+  // syncing with no range fetches only today. 180 days ≈ the reports' 6-month default.
+  const range = lastNDays(new Date(), 180);
+
+  // Persist the org server-side so it survives restarts (Explorer prefill) and gives the
+  // background scheduler a scope. Saved on blur — no need to re-enter it every session.
+  const persistOrg = useMutation({
+    mutationFn: (o: string) => api.put("/api/data/config", { org: o }),
+  });
 
   const sync = useMutation({
-    mutationFn: (dataset: string) => api.post("/api/data/sync", { dataset, org: trimmedOrg }),
+    // force: an explicit click re-fetches even a range that already looks covered (e.g. one
+    // that previously synced 0 rows behind a permission 404) — otherwise nothing happens.
+    mutationFn: (dataset: string) =>
+      api.post("/api/data/sync", { dataset, org: trimmedOrg, range, force: true }),
+    onSettled: () => qc.invalidateQueries({ queryKey: DATASETS_KEY }),
+  });
+
+  // Sync every dataset for the current org, sequentially (octokit throttles anyway). One
+  // dataset's failure (e.g. a 403 where an org policy is off) must not abort the rest, so
+  // each is caught; per-row coverage/errors refresh from the single invalidation at the end.
+  const syncAll = useMutation({
+    mutationFn: async () => {
+      // Skip readonly query datasets — they're computed from SQL, syncing them is a no-op.
+      for (const d of (catalog.data ?? []).filter((x) => !x.readonly)) {
+        await api
+          .post("/api/data/sync", { dataset: d.id, org: trimmedOrg, range, force: true })
+          .catch(() => {});
+      }
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: DATASETS_KEY }),
   });
 
@@ -65,10 +92,27 @@ export function Explorer() {
   const rows = catalog.data ?? [];
   return (
     <section className="explorer">
-      <label className="explorer-org">
-        Org
-        <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="your-github-org" />
-      </label>
+      <div className="explorer-controls">
+        <label className="explorer-org">
+          Org
+          <input
+            value={org}
+            onChange={(e) => setOrg(e.target.value)}
+            onBlur={() => persistOrg.mutate(trimmedOrg)}
+            placeholder="your-github-org"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!trimmedOrg || syncAll.isPending || sync.isPending}
+          onClick={() => {
+            persistOrg.mutate(trimmedOrg);
+            syncAll.mutate();
+          }}
+        >
+          {syncAll.isPending ? "Syncing all…" : "Sync all"}
+        </button>
+      </div>
       {catalog.error && (
         <p className="explorer error" role="alert">
           Couldn’t refresh the catalog — showing the last known state.
@@ -101,15 +145,24 @@ export function Explorer() {
                     <p className="muted">{d.description}</p>
                   </td>
                   <td>{d.scope}</td>
-                  <td>{syncing ? "syncing…" : formatCoverage(d.coverage, now)}</td>
+                  <td>
+                    {d.readonly
+                      ? "computed on query"
+                      : syncing
+                        ? "syncing…"
+                        : formatCoverage(coverageForOrg(d.coverage, trimmedOrg), now)}
+                  </td>
                   <td className="actions">
-                    <button
-                      type="button"
-                      disabled={!trimmedOrg || sync.isPending}
-                      onClick={() => sync.mutate(d.id)}
-                    >
-                      Sync now
-                    </button>
+                    {/* Query datasets are derived SQL — no GitHub sync to run. */}
+                    {!d.readonly && (
+                      <button
+                        type="button"
+                        disabled={!trimmedOrg || sync.isPending}
+                        onClick={() => sync.mutate(d.id)}
+                      >
+                        Sync now
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={!trimmedOrg || runPreview.isPending}

@@ -72,7 +72,7 @@ describe("auth service", () => {
     await h.kernel.start(h.app);
     const res = await h.app.request("/api/auth/status");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ registered: false, unlocked: false });
+    expect(await res.json()).toEqual({ registered: false, unlocked: false, hasSession: false });
   });
 
   it("register/verify unlocks: session cookie, master key, auth.unlocked event", async () => {
@@ -90,8 +90,20 @@ describe("auth service", () => {
     // the cookie's token is a live session
     const token = /ghr_session=([^;]+)/.exec(cookie)?.[1] ?? "";
     expect(h.sessions.touch(token)).toBe(true);
-    const status = await h.app.request("/api/auth/status");
-    expect(await status.json()).toEqual({ registered: true, unlocked: true });
+    // Without the cookie: unlocked (global) but NO session — the UI must route to login, not app.
+    const noCookie = await h.app.request("/api/auth/status");
+    expect(await noCookie.json()).toEqual({
+      registered: true,
+      unlocked: true,
+      hasSession: false,
+    });
+    // With the cookie: this browser has a live session → hasSession true → routes to app.
+    const withCookie = await h.app.request("/api/auth/status", { headers: { Cookie: cookie } });
+    expect(await withCookie.json()).toEqual({
+      registered: true,
+      unlocked: true,
+      hasSession: true,
+    });
   });
 
   it("returns the 403 already-registered envelope on a second register/options", async () => {
@@ -133,7 +145,11 @@ describe("auth service", () => {
     expect([...key].every((b) => b === 0)).toBe(true); // zeroed in place
     expect(h.keySets.at(-1)).toBeNull(); // slot cleared → encfile locked again
     const status = await h.app.request("/api/auth/status");
-    expect(await status.json()).toEqual({ registered: true, unlocked: false });
+    expect(await status.json()).toEqual({
+      registered: true,
+      unlocked: false,
+      hasSession: false,
+    });
   });
 
   it("rejects a non-JSON verify body with a 400 envelope", async () => {
@@ -174,6 +190,7 @@ describe("auth service", () => {
     expect((await (await app.request("/api/auth/status")).json()) as unknown).toEqual({
       registered: false,
       unlocked: false,
+      hasSession: false,
     });
     await post(app, "/api/auth/register/options"); // not 403
     const retry = await post(app, "/api/auth/register/verify");

@@ -2,6 +2,14 @@ import { buildApp } from "./app";
 import { embedded } from "./embedded";
 import { mountStatic } from "./static";
 
+// The compiled binary ships the UI embedded; a non-empty manifest means we ARE the packaged
+// app, so turn on packaged behaviors (the background scheduler) even when GHR_PACKAGED is
+// unset. Must run before buildApp(), which reads the env into a frozen config. Explicit
+// GHR_PACKAGED (0 or 1) still wins for anyone overriding it.
+if (Object.keys(embedded).length > 0 && process.env.GHR_PACKAGED === undefined) {
+  process.env.GHR_PACKAGED = "1";
+}
+
 const { app, kernel, ctx, roDb } = buildApp();
 await kernel.start(app);
 // Serve the embedded UI last — after kernel.start mounted /api/*, so the catch-all

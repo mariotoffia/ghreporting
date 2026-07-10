@@ -71,14 +71,14 @@ export function buildApp(
     providers: [githubPatProvider(), githubDeviceProvider()],
   });
 
-  // The one GitHub door. The token comes from the credentials service per request
-  // (rotation-safe); a device-flow token wins over a pasted PAT when both exist (ADR 0018).
-  // Before any valid token is stored, every sync fails into the stale-serve path.
+  // The one GitHub door. Tokens come from the credentials service per request (rotation-safe).
+  // The two credentials are COMPLEMENTARY (ADR 0018): a fine-grained PAT reads the enhanced
+  // billing platform (premium-requests/billing-usage) but not Copilot; a device-flow token
+  // reads Copilot but not billing. The client tries the PAT first and falls back to the device
+  // token on a 401/403, so each endpoint uses whichever token can access it. Before any valid
+  // token is stored, `tokens()` is empty and every sync fails into the stale-serve path.
   const gh = createGitHubClient({
-    tokenProvider: credentials.firstConfiguredTokenProvider([
-      "github-oauth:default",
-      "github-pat:default",
-    ]),
+    tokens: credentials.configuredTokensProvider(["github-pat:default", "github-oauth:default"]),
     log: log.child("github"),
   });
   // Access (E4): sessions live here so the gate middleware and the auth service

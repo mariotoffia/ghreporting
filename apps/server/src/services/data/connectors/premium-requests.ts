@@ -227,7 +227,13 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
         }
         members = members.sort((a, b) => a.login.localeCompare(b.login));
       }
+      // Enterprise-owned orgs forbid per-user filtering entirely ("Organization admins for
+      // enterprise owned organizations cannot filter usage by user"). It's an org-wide rule,
+      // not per user, so on the first such refusal we stop the per-user grain and keep the
+      // org-level day rows above — rather than failing the whole sync.
+      let perUserBlocked = false;
       for (const { year, month, lastDay } of monthsOf(gap.from, gap.to)) {
+        if (perUserBlocked) break;
         for (const user of members) {
           let res: { status: number; data?: UsageResponse };
           try {
@@ -239,6 +245,13 @@ export function premiumRequestsConnector(now: () => Date): DatasetConnector {
             });
           } catch (e) {
             if ((e as { status?: number }).status === 404) continue;
+            if (String((e as Error).message).includes("cannot filter usage by user")) {
+              ctx.log.info("premium-requests: per-user grain unavailable (enterprise-owned org)", {
+                org: gap.scope,
+              });
+              perUserBlocked = true;
+              break;
+            }
             throw e;
           }
           if (res.status !== 200 || !res.data?.usageItems) continue;

@@ -9,12 +9,16 @@ import {
 } from "@simplewebauthn/browser";
 import type { Api } from "../../lib/api";
 
-export type AuthStatus = { registered: boolean; unlocked: boolean };
+export type AuthStatus = { registered: boolean; unlocked: boolean; hasSession: boolean };
 
 /** Which screen the auth status maps to (first-run setup → login → app). */
 export function nextScreen(s: AuthStatus): "setup" | "login" | "app" {
   if (!s.registered) return "setup";
-  return s.unlocked ? "app" : "login";
+  // Route on THIS browser's session, not the server-global `unlocked`. A session-less browser
+  // (server restart, idle-expiry, or a second browser) must land on login to mint a session —
+  // routing on `unlocked` alone drops it into the app where every /api/* call 401s with no way
+  // back. Logging in re-runs unlock() and sets a fresh session cookie.
+  return s.hasSession ? "app" : "login";
 }
 
 /** First-run: create a passkey. A verified ceremony unlocks the server-side. */

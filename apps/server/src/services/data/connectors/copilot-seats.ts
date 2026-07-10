@@ -59,7 +59,14 @@ export function copilotSeatsConnector(now: () => Date): DatasetConnector {
       for await (const page of gh.paginate<GhSeat>("/orgs/{org}/copilot/billing/seats", {
         org: gap.scope,
       })) {
-        for (const s of page) {
+        // GitHub's Copilot seats endpoint returns a wrapped { total_seats, seats:[] } object per
+        // page, which octokit does NOT flatten to a bare array (its normalizer keys on
+        // total_count, not total_seats). Unwrap it; stay tolerant of a bare array in case a
+        // future octokit normalizes it, or a fixture supplies one.
+        const seats: GhSeat[] = Array.isArray(page)
+          ? page
+          : ((page as unknown as { seats?: GhSeat[] }).seats ?? []);
+        for (const s of seats) {
           if (!s.assignee) continue; // seat with no assignee carries no reportable user
           rows.push({
             kind: "seat",

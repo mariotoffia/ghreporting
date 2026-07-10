@@ -157,6 +157,7 @@ describe("data service", () => {
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe("fake-ds");
     expect(list[0]?.coverage[0]).toMatchObject({ scope: "acme", status: "idle" });
+    expect((list[0] as { readonly?: boolean }).readonly).toBe(false); // built-in ⇒ syncable
   });
 
   it("GET /config returns null org when GHR_ORG is unset", async () => {
@@ -173,6 +174,24 @@ describe("data service", () => {
     await harness.kernel.start(harness.app);
     const res = await harness.app.request("/api/data/config");
     expect(await res.json()).toEqual({ org: "acme" });
+  });
+
+  it("PUT /config persists the org (GET reflects it); a blank org clears it back to null", async () => {
+    await start(fakeConnector());
+    const put = async (org: unknown) =>
+      (
+        await harness.app.request("/api/data/config", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ org }),
+        })
+      ).json();
+    expect(await put("saved-org")).toEqual({ org: "saved-org" });
+    expect(await (await harness.app.request("/api/data/config")).json()).toEqual({
+      org: "saved-org",
+    });
+    expect(await put("  ")).toEqual({ org: null }); // blank clears it
+    expect(await (await harness.app.request("/api/data/config")).json()).toEqual({ org: null });
   });
 
   it("POST /query validates org and range and clamps limit to 1000", async () => {
@@ -286,6 +305,45 @@ describe("data service", () => {
     expect(calls.slice(0, 3)).toEqual(["coverage", "fetch", "upsert"]);
     await harness.kernel.stop();
     expect(intervals.size).toBe(0); // shutdown cleared every timer
+  });
+
+  it("scheduler runs with no GHR_ORG once an org is persisted via PUT /config", async () => {
+    harness = buildHarness({ GHR_SCHEDULER: "1" }); // deliberately NO GHR_ORG
+    harness.bind.bindNotify(() => {});
+    let nextId = 1;
+    const intervals = new Map<number, { fn: () => void }>();
+    const timers = {
+      setInterval: ((fn: () => void) => {
+        const id = nextId++;
+        intervals.set(id, { fn });
+        return id;
+      }) as unknown as typeof setInterval,
+      clearInterval: ((id: number) => intervals.delete(id)) as unknown as typeof clearInterval,
+    };
+    const calls: string[] = [];
+    harness.kernel.register(
+      createDataService({
+        gh,
+        connectors: [fakeConnector("fake-ds", calls)],
+        schedulerControls: { timers, rand: () => 0.5 },
+      }),
+    );
+    await harness.kernel.start(harness.app);
+    harness.ctx.bus.emit({ type: "auth.unlocked" });
+    for (const t of [...intervals.values()]) t.fn(); // warm-up tick — no org yet → no-op
+    await Bun.sleep(0);
+    expect(calls).toEqual([]); // nothing synced: no scope configured
+
+    // User picks an org in the Explorer → persisted; the next tick syncs it, no restart needed.
+    await harness.app.request("/api/data/config", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ org: "picked-org" }),
+    });
+    for (const t of [...intervals.values()]) t.fn();
+    await Bun.sleep(0);
+    expect(calls.slice(0, 3)).toEqual(["coverage", "fetch", "upsert"]);
+    await harness.kernel.stop();
   });
 
   it("POST /sync fills gaps and reports the summary", async () => {

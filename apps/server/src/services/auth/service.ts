@@ -79,9 +79,18 @@ export function createAuthService(opts: {
     },
 
     routes(app: Hono) {
-      app.get("/status", (c) =>
-        c.json({ registered: ceremonies.registered(), unlocked: masterKey !== null }),
-      );
+      app.get("/status", (c) => {
+        // `unlocked` is process-global (master key in memory); `hasSession` is per-browser —
+        // the /api/* gate needs the latter. The UI must route on hasSession, not unlocked, or a
+        // session-less browser (after a restart, idle-expiry, or a different browser) lands in
+        // the app and 401s forever with no way back to login. See flows.nextScreen.
+        const token = getCookie(c, SESSION_COOKIE);
+        return c.json({
+          registered: ceremonies.registered(),
+          unlocked: masterKey !== null,
+          hasSession: token ? opts.sessions.touch(token) : false,
+        });
+      });
 
       app.post("/register/options", async (c) => c.json(await ceremonies.registerOptions()));
 

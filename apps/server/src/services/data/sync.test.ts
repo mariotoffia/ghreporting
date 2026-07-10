@@ -119,6 +119,31 @@ describe("syncGaps", () => {
     expect(events).toEqual([]);
   });
 
+  it("force re-fetches an already-covered range (the 'Sync now does nothing' fix)", async () => {
+    const calls: string[] = [];
+    // A watermark-aware connector: it reports a gap only when there is NO watermark yet —
+    // exactly how the real range/snapshot coverage helpers behave.
+    const wmAware = (): DatasetConnector => ({
+      ...connector({ gaps: [], calls }),
+      coverage: () => {
+        calls.push("coverage");
+        return readSyncState(db, "fake-ds").length > 0
+          ? []
+          : [{ scope: "acme", from: "2026-07-01", to: "2026-07-05" }];
+      },
+    });
+    // Pretend a prior sync "covered" the range but landed nothing (e.g. a swallowed 404).
+    markSynced(db, "fake-ds", { scope: "acme", from: "2026-07-01", to: "2026-07-05" }, NOW);
+
+    calls.length = 0;
+    await syncGaps(wmAware(), q, ctx, gh); // no force: watermark present → no gap → no fetch
+    expect(calls).toEqual(["coverage"]);
+
+    calls.length = 0;
+    await syncGaps(wmAware(), q, ctx, gh, { force: true }); // force: drop watermark → re-fetch
+    expect(calls).toEqual(["coverage", "fetch:2026-07-01", "upsert"]);
+  });
+
   it("a failing fetch marks error, notifies, emits sync.failed, and stops", async () => {
     const calls: string[] = [];
     const c = connector({

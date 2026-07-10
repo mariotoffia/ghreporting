@@ -35,6 +35,12 @@ export interface CredentialsService extends MicroService {
    * Propagates SecretsLockedError; throws NotFoundError only if none is configured.
    */
   firstConfiguredTokenProvider(ids: string[]): () => Promise<string>;
+  /**
+   * A per-request reader returning EVERY configured secret in `ids` order (skipping
+   * unconfigured), so the GitHub client can try a complementary token on a 401/403 — e.g.
+   * a billing PAT then a Copilot device token (ADR 0018). Propagates SecretsLockedError.
+   */
+  configuredTokensProvider(ids: string[]): () => Promise<string[]>;
 }
 
 export function createCredentialsService(opts: {
@@ -177,6 +183,16 @@ export function createCredentialsService(opts: {
           if (secret !== null) return secret; // device-flow preferred when ids is ordered so
         }
         throw new NotFoundError(`credential ${ids.join(" or ")}`);
+      };
+    },
+    configuredTokensProvider(ids) {
+      return async () => {
+        const out: string[] = [];
+        for (const id of ids) {
+          const secret = await ctx.secrets.get(account(id)); // locked → SecretsLockedError propagates
+          if (secret !== null) out.push(secret);
+        }
+        return out; // may be empty — the caller decides how to fail
       };
     },
     async init(c) {

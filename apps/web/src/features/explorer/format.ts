@@ -13,6 +13,16 @@ export interface CoverageRow {
   error: string | null;
 }
 
+/**
+ * Only the watermark rows for the org currently in view. The catalog embeds coverage for
+ * EVERY scope ever synced, so without this a different org's failure — or a stale row from a
+ * previously-typed org (e.g. a wrong-case login under an old build) — bleeds into this org's
+ * coverage line and makes a healthy dataset look broken. Empty org ⇒ show all (unfiltered).
+ */
+export function coverageForOrg(rows: CoverageRow[], org: string): CoverageRow[] {
+  return org ? rows.filter((r) => r.scope === org) : rows;
+}
+
 /** A catalog entry: dataset metadata plus its coverage watermarks. */
 export interface CatalogEntry {
   id: string;
@@ -22,6 +32,8 @@ export interface CatalogEntry {
   columns: { name: string; type: "string" | "number" | "date"; description: string }[];
   freshnessTtlHours: number;
   coverage: CoverageRow[];
+  /** True for derived query datasets (ADR 0016): computed from SQL, never synced from GitHub. */
+  readonly?: boolean;
 }
 
 /**

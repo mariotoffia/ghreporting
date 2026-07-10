@@ -59,7 +59,10 @@ export function ghError(status: number): unknown {
  */
 export function fakeGitHub(fixtures: {
   gets?: Record<string, unknown>;
-  pages?: Record<string, unknown[][]>;
+  // Each element is one page, yielded as-is. Usually a bare array of items, but some GitHub
+  // endpoints (e.g. Copilot seats) return a wrapped { …, seats:[] } object octokit does not
+  // flatten — a fixture can supply that shape so a connector's unwrapping is exercised for real.
+  pages?: Record<string, unknown[]>;
   downloads?: Record<string, string>;
 }): GitHubClient & { calls: string[] } {
   const calls: string[] = [];

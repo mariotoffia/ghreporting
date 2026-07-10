@@ -17,7 +17,7 @@ export function Login() {
   const status = useQuery({ queryKey: STATUS_KEY, queryFn: fetchStatus });
   const screen = status.data ? nextScreen(status.data) : null;
 
-  // Already unlocked (fresh session or just-verified) → into the app.
+  // This browser already has a live session (fresh or just-verified) → into the app.
   useEffect(() => {
     if (screen === "app") setView("explorer");
   }, [screen, setView]);
